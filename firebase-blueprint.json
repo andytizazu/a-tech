@@ -1,0 +1,169 @@
+{
+  "entities": {
+    "UserProfile": {
+      "title": "User Profile",
+      "description": "Stores user roles, profile information, and verification status.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "email": { "type": "string", "format": "email" },
+        "role": { "type": "string", "enum": ["admin", "pharmacy", "importer", "regional_manager", "staff", "marketing"] },
+        "displayName": { "type": "string" },
+        "username": { "type": "string" },
+        "password": { "type": "string" },
+        "staffRole": { "type": "string" },
+        "pharmacyId": { "type": "string" },
+        "permissions": { "type": "array", "items": { "type": "string" } },
+        "promoCode": { "type": "string" },
+        "referredBy": { "type": "string" },
+        "marketingId": { "type": "string" },
+        "commissionBalance": { "type": "number" },
+        "theme": { "type": "string", "enum": ["light", "dark"] },
+        "country": { "type": "string" },
+        "region": { "type": "string" },
+        "city": { "type": "string" },
+        "pharmacyName": { "type": "string" },
+        "importerName": { "type": "string" },
+        "subscriptionType": { "type": "string", "enum": ["basic", "standard", "premium"] },
+        "subscriptionStatus": { "type": "string", "enum": ["active", "expired"] },
+        "verificationStatus": { "type": "string", "enum": ["pending", "approved", "rejected"] },
+        "verificationDocs": { "type": "array", "items": { "type": "string" } },
+        "rejectionReason": { "type": "string" },
+        "createdAt": { "type": "number" }
+      },
+      "required": ["uid", "email", "role", "verificationStatus", "createdAt"]
+    },
+    "Medicine": {
+      "title": "Medicine",
+      "description": "Inventory items for a pharmacy.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "category": { "type": "string" },
+        "price": { "type": "number" },
+        "costPrice": { "type": "number" },
+        "quantity": { "type": "number" },
+        "batchNumber": { "type": "string" },
+        "expiryDate": { "type": "string" },
+        "supplier": { "type": "string" },
+        "pharmacyId": { "type": "string" },
+        "lowStockThreshold": { "type": "number" },
+        "createdAt": { "type": "number" }
+      },
+      "required": ["id", "name", "price", "quantity", "pharmacyId", "createdAt"]
+    },
+    "Sale": {
+      "title": "Sale",
+      "description": "Recorded sales transactions.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "pharmacyId": { "type": "string" },
+        "items": { "type": "array" },
+        "totalAmount": { "type": "number" },
+        "paymentMethod": { "type": "string", "enum": ["cash", "credit"] },
+        "customerName": { "type": "string" },
+        "customerPhone": { "type": "string" },
+        "createdAt": { "type": "number" }
+      },
+      "required": ["id", "pharmacyId", "items", "totalAmount", "paymentMethod", "createdAt"]
+    },
+    "MarketplaceProduct": {
+      "title": "Marketplace Product",
+      "description": "Products listed by importers for pharmacies to buy.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "importerId": { "type": "string" },
+        "importerName": { "type": "string" },
+        "name": { "type": "string" },
+        "description": { "type": "string" },
+        "category": { "type": "string" },
+        "price": { "type": "number" },
+        "minOrderQuantity": { "type": "number" },
+        "stockQuantity": { "type": "number" },
+        "country": { "type": "string" },
+        "createdAt": { "type": "number" }
+      },
+      "required": ["id", "importerId", "name", "price", "country", "createdAt"]
+    },
+    "Order": {
+      "title": "Order",
+      "description": "B2B orders from pharmacies to importers.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "pharmacyId": { "type": "string" },
+        "pharmacyName": { "type": "string" },
+        "marketingId": { "type": "string" },
+        "importerId": { "type": "string" },
+        "importerName": { "type": "string" },
+        "items": { "type": "array" },
+        "totalAmount": { "type": "number" },
+        "status": { "type": "string", "enum": ["pending", "confirmed", "shipped", "delivered", "cancelled"] },
+        "country": { "type": "string" },
+        "createdAt": { "type": "number" }
+      },
+      "required": ["id", "pharmacyId", "importerId", "items", "totalAmount", "status", "country", "createdAt"]
+    },
+    "SystemSettings": {
+      "title": "System Settings",
+      "description": "Global configuration for commissions and limits.",
+      "type": "object",
+      "properties": {
+        "globalCommissionPercent": { "type": "number" },
+        "contactEmail": { "type": "string" },
+        "contactPhone": { "type": "string" },
+        "importerCommissions": { "type": "object" },
+        "marketingCommission": {
+          "type": "object",
+          "properties": {
+            "durationMonths": { "type": "number" },
+            "basicPlanRate": { "type": "number" },
+            "standardPlanRate": { "type": "number" },
+            "premiumPlanRate": { "type": "number" },
+            "orderCommissionPercent": { "type": "number" }
+          }
+        },
+        "maxMedicinesPerPlan": { "type": "object" },
+        "featuresEnabled": { "type": "object" },
+        "updatedAt": { "type": "number" }
+      }
+    }
+  },
+  "firestore": {
+    "/users/{uid}": {
+      "schema": "UserProfile",
+      "description": "User profile documents."
+    },
+    "/medicines/{medicineId}": {
+      "schema": "Medicine",
+      "description": "Medicine inventory documents."
+    },
+    "/sales/{saleId}": {
+      "schema": "Sale",
+      "description": "Sales transaction documents."
+    },
+    "/products/{productId}": {
+      "schema": "MarketplaceProduct",
+      "description": "Marketplace product documents."
+    },
+    "/orders/{orderId}": {
+      "schema": "Order",
+      "description": "B2B order documents."
+    },
+    "/system_settings/main": {
+      "schema": "SystemSettings",
+      "description": "Global system configuration."
+    },
+    "/notifications/{notificationId}": {
+      "schema": "Notification",
+      "description": "System notifications."
+    },
+    "/audit_logs/{logId}": {
+      "schema": "AuditLog",
+      "description": "Security and activity logs."
+    }
+  }
+}
