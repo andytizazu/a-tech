@@ -4,12 +4,12 @@ import { format } from 'date-fns';
 import { Sale, Medicine } from '../types';
 
 const COLORS = {
-  primary: [37, 99, 235], // Blue 600
-  secondary: [100, 116, 139], // Slate 500
-  success: [22, 163, 74], // Green 600
-  danger: [220, 38, 38], // Red 600
-  light: [248, 250, 252], // Slate 50
-  dark: [15, 23, 42], // Slate 900
+  primary: [37, 99, 235] as [number, number, number], // Blue 600
+  secondary: [100, 116, 139] as [number, number, number], // Slate 500
+  success: [22, 163, 74] as [number, number, number], // Green 600
+  danger: [220, 38, 38] as [number, number, number], // Red 600
+  light: [248, 250, 252] as [number, number, number], // Slate 50
+  dark: [15, 23, 42] as [number, number, number], // Slate 900
 };
 
 const drawLogo = (doc: jsPDF, x: number, y: number) => {

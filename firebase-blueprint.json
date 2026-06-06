@@ -13,6 +13,7 @@
         "password": { "type": "string" },
         "staffRole": { "type": "string" },
         "pharmacyId": { "type": "string" },
+        "importerId": { "type": "string" },
         "permissions": { "type": "array", "items": { "type": "string" } },
         "promoCode": { "type": "string" },
         "referredBy": { "type": "string" },

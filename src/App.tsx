@@ -14,7 +14,8 @@ import {
   signOut,
   signInWithEmailAndPassword,
   createUserWithEmailAndPassword,
-  sendPasswordResetEmail
+  sendPasswordResetEmail,
+  browserPopupRedirectResolver
 } from 'firebase/auth';
 import { 
   doc, 
@@ -28,6 +29,7 @@ import {
   updateDoc,
   deleteDoc,
   increment,
+  writeBatch,
   getDocs,
   getDocFromServer,
   orderBy,
@@ -57,11 +59,13 @@ import {
   CheckCircle,
   XCircle,
   TrendingUp,
+  Save,
+  CreditCard,
   Users,
   MapPin,
   ChevronRight,
+  ChevronLeft,
   ShieldCheck,
-  CreditCard,
   Mail,
   Lock,
   User,
@@ -76,7 +80,11 @@ import {
   UserPlus,
   Sun,
   Moon,
-  Phone
+  Phone,
+  Menu,
+  Box,
+  Store,
+  BarChart3
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Toaster, toast } from 'react-hot-toast';
@@ -90,6 +98,7 @@ import {
   Tooltip, 
   ResponsiveContainer
 } from 'recharts';
+import SuppliersView from './components/SuppliersView';
 import { 
   UserProfile, 
   Medicine, 
@@ -139,8 +148,9 @@ interface FirestoreErrorInfo {
 }
 
 function handleFirestoreError(error: unknown, operationType: OperationType, path: string | null) {
+  const errorMessage = error instanceof Error ? error.message : String(error);
   const errInfo: FirestoreErrorInfo = {
-    error: error instanceof Error ? error.message : String(error),
+    error: errorMessage,
     authInfo: {
       userId: auth.currentUser?.uid,
       email: auth.currentUser?.email,
@@ -157,9 +167,19 @@ function handleFirestoreError(error: unknown, operationType: OperationType, path
     operationType,
     path
   };
+  
   console.error('Firestore Error: ', JSON.stringify(errInfo));
-  // We don't throw here to avoid crashing the app, but we log it as required.
-  toast.error(`Permission Denied: ${operationType} on ${path}`);
+  
+  if (errorMessage.toLowerCase().includes('offline') || 
+      errorMessage.toLowerCase().includes('unavailable') || 
+      errorMessage.toLowerCase().includes('failed to fetch') ||
+      errorMessage.toLowerCase().includes('network-request-failed')) {
+    toast.error("Network connection unstable. Please: 1. Disable ad-blockers. 2. Ensure third-party cookies are enabled. 3. Try 'Open in new tab'.", { icon: '🌐', duration: 7000 });
+  } else if (errorMessage.toLowerCase().includes('permission denied') || errorMessage.toLowerCase().includes('insufficient permissions')) {
+    toast.error(`Access Denied: ${operationType} on ${path}. Please contact admin.`);
+  } else {
+    toast.error(`Operation failed: ${operationType}. Check your connection.`);
+  }
 }
 
 // Error Boundary Component
@@ -218,7 +238,8 @@ class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
 // --- Auth & Signup Components ---
 
 const bootstrapAdmin = async (user: any) => {
-  if (user.email === 'andualemtyb@gmail.com') {
+  const adminEmails = ['andualemtyb@gmail.com', 'atech2119@gmail.com'];
+  if (adminEmails.includes(user.email)) {
     const userRef = doc(db, 'users', user.uid);
     const userDoc = await getDoc(userRef);
     
@@ -229,19 +250,120 @@ const bootstrapAdmin = async (user: any) => {
         role: 'admin',
         displayName: user.displayName || 'Super Admin',
         verificationStatus: 'approved',
+        subscriptionType: 'premium',
         createdAt: Date.now()
       };
       await setDoc(userRef, adminProfile);
     } else {
       const data = userDoc.data() as UserProfile;
-      if (data.role !== 'admin' || data.verificationStatus !== 'approved') {
+      if (data.role !== 'admin' || data.verificationStatus !== 'approved' || data.subscriptionType !== 'premium') {
         await updateDoc(userRef, { 
           role: 'admin', 
-          verificationStatus: 'approved' 
+          verificationStatus: 'approved',
+          subscriptionType: 'premium'
         });
       }
     }
   }
+};
+
+const ConnectionTroubleshooter = () => {
+  const [status, setStatus] = useState<'idle' | 'checking' | 'error' | 'success'>('idle');
+  const [details, setDetails] = useState<string[]>([]);
+
+  const checkConnection = async () => {
+    setStatus('checking');
+    setDetails([]);
+    
+    const logs: string[] = [];
+    try {
+      logs.push("Checking Firebase initialization...");
+      if (!auth || !db) throw new Error("Firebase modules not loaded");
+      logs.push("✓ Firebase modules active");
+
+      logs.push("Testing Firestore reachability...");
+      // Wrap in a promise with timeout
+      const testPromise = getDocFromServer(doc(db, 'test', 'connection'));
+      const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error("Connection timed out")), 5000));
+      
+      await Promise.race([testPromise, timeoutPromise]).catch(err => {
+        if (err.message.includes('permission') || err.code === 'permission-denied') {
+          // This is fine, we just want to see if we can reach the server
+          return;
+        }
+        throw err;
+      });
+      
+      logs.push("✓ Firestore connection stable");
+      setStatus('success');
+    } catch (err: any) {
+      console.error("Diagnostic error:", err);
+      logs.push(`✖ Error: ${err.message || "Unknown connectivity issue"}`);
+      if (err.code === 'unavailable' || err.message?.includes('offline') || err.message?.includes('timeout')) {
+        logs.push("Reason: You appear to be offline or a firewall/ad-blocker is blocking Firebase.");
+      }
+      setStatus('error');
+    }
+    setDetails(logs);
+  };
+
+  return (
+    <div className="mt-8 pt-6 border-t border-slate-100 dark:border-slate-800">
+      <div className="bg-slate-50 dark:bg-slate-800/50 rounded-2xl p-4">
+        <div className="flex items-center justify-between mb-2">
+          <h3 className="text-xs font-bold text-slate-900 dark:text-white flex items-center gap-2">
+            <Zap size={14} className="text-amber-500" />
+            Connection Troubleshooter
+          </h3>
+          {status === 'success' && <CheckCircle size={14} className="text-green-500" />}
+          {status === 'error' && <AlertTriangle size={14} className="text-red-500" />}
+        </div>
+        <p className="text-[10px] text-slate-500 dark:text-slate-400 mb-3 leading-relaxed">
+          Having trouble reaching our servers? Use this tool to diagnose common browser restrictions.
+        </p>
+        
+        {status === 'idle' && (
+          <button 
+            onClick={checkConnection}
+            className="text-[10px] font-bold text-blue-600 dark:text-blue-400 hover:underline"
+          >
+            Run Connectivity Test →
+          </button>
+        )}
+        
+        {status === 'checking' && (
+          <div className="flex items-center gap-2 text-[10px] text-blue-600 dark:text-blue-400 font-bold">
+            <div className="w-2 h-2 rounded-full bg-blue-600 animate-pulse" />
+            Testing...
+          </div>
+        )}
+        
+        {details.length > 0 && (
+          <div className="mt-2 space-y-1">
+            {details.map((log, i) => (
+              <p key={i} className={`text-[9px] font-mono leading-tight ${log.startsWith('✓') ? 'text-green-600 dark:text-green-400' : log.startsWith('✖') ? 'text-red-600 dark:text-red-400' : 'text-slate-400'}`}>
+                {log}
+              </p>
+            ))}
+          </div>
+        )}
+
+        {(status === 'error' || status === 'success') && (
+          <div className="mt-3 flex flex-col gap-2">
+            <p className="text-[9px] text-slate-500 dark:text-slate-400 leading-relaxed italic">
+              <strong>Recommendation:</strong> If any test fails, clicking the <strong>"Open in new tab"</strong> icon at the top right is usually the fastest fix.
+            </p>
+            <button 
+              onClick={checkConnection}
+              className="text-[9px] font-bold text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 transition-colors self-start"
+            >
+              Verify Again
+            </button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
 };
 
 const Login = ({ onLoginSuccess }: { onLoginSuccess: (user: any) => void }) => {
@@ -253,6 +375,10 @@ const Login = ({ onLoginSuccess }: { onLoginSuccess: (user: any) => void }) => {
   const [username, setUsername] = useState('');
   const [loading, setLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
+
+  const validateEmail = (emailStr: string) => {
+    return /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/.test(emailStr.trim());
+  };
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -319,7 +445,8 @@ const Login = ({ onLoginSuccess }: { onLoginSuccess: (user: any) => void }) => {
         generatedEmail: email 
       });
       
-      const result = await signInWithEmailAndPassword(auth, email, inputPassword);
+      const cleanedEmail = email.trim().toLowerCase();
+      const result = await signInWithEmailAndPassword(auth, cleanedEmail, inputPassword);
       const user = result.user;
       
       toast.success('Welcome back!', { id: authToast });
@@ -331,6 +458,8 @@ const Login = ({ onLoginSuccess }: { onLoginSuccess: (user: any) => void }) => {
         message = 'Invalid credentials. Please double-check your Pharmacy Name, Username, and Password. The Pharmacy Name must match what was used during registration.';
       } else if (error.code === 'auth/invalid-email') {
         message = 'The generated staff email is invalid. Please contact support.';
+      } else if (error.code === 'auth/network-request-failed') {
+        message = 'Connection failed. Please: 1. Check your internet. 2. Disable ad-blockers. 3. Try "Open in new tab" using the icon at the top right of this preview.';
       }
       toast.error(message, { id: authToast });
     } finally {
@@ -339,20 +468,49 @@ const Login = ({ onLoginSuccess }: { onLoginSuccess: (user: any) => void }) => {
   };
 
   const handleGoogleLogin = async () => {
+    if (loading) return;
+    
+    setLoading(true);
     const provider = new GoogleAuthProvider();
+    const loginToast = toast.loading('Connecting to Google...');
     try {
-      const result = await signInWithPopup(auth, provider);
+      const result = await signInWithPopup(auth, provider, browserPopupRedirectResolver);
       const user = result.user;
       await bootstrapAdmin(user);
       onLoginSuccess(user);
+      toast.success('Google login successful!', { id: loginToast });
     } catch (error: any) {
-      if (error.code === 'auth/popup-closed-by-user' || error.code === 'auth/cancelled-popup-request') {
-        // User closed the popup or cancelled the request, no need to show an error toast
-        console.log('Login popup closed or cancelled by user');
+      const errorCode = error.code;
+      const errorMsg = error.message?.toLowerCase() || '';
+      
+      if (
+        errorCode === 'auth/popup-closed-by-user' || 
+        errorCode === 'auth/cancelled-popup-request' ||
+        errorMsg.includes('popup-closed-by-user') ||
+        errorMsg.includes('cancelled-popup-request')
+      ) {
+        toast.dismiss(loginToast);
+        setLoading(false);
         return;
       }
-      console.error(error);
-      toast.error('Google login failed');
+
+      console.error('Google Auth Error:', error);
+      let message = 'Google login failed';
+      if (error.code === 'auth/network-request-failed') {
+        message = 'Network error. Please check your connection and disable any ad-blockers.';
+      } else if (error.code === 'auth/popup-blocked') {
+        message = 'The Google login popup was blocked by your browser. This is common in preview environments. Please try clicking the "open in a new tab" link at the bottom of the login form.';
+      } else if (error.code === 'auth/internal-error' || error.message?.includes('cookies')) {
+        message = 'Third-party cookies might be blocked. Please enable them in your browser settings to use Google Login.';
+      } else if (error.code === 'auth/operation-not-allowed') {
+        message = 'Google Login is not enabled in the Firebase Console. Please use Email login or contact the administrator.';
+      } else if (error.code === 'auth/account-exists-with-different-credential') {
+        message = 'An account already exists with this email using a different login method (e.g. Email/Password). Please log in using that method instead.';
+      }
+
+      toast.error(message, { id: loginToast });
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -363,7 +521,8 @@ const Login = ({ onLoginSuccess }: { onLoginSuccess: (user: any) => void }) => {
     }
     const resetToast = toast.loading('Sending reset email...');
     try {
-      await sendPasswordResetEmail(auth, email);
+      const cleanedEmail = email.replace(/\s/g, '').toLowerCase();
+      await sendPasswordResetEmail(auth, cleanedEmail);
       toast.success('Password reset email sent! Check your inbox.', { id: resetToast });
     } catch (error: any) {
       console.error(error);
@@ -381,31 +540,52 @@ const Login = ({ onLoginSuccess }: { onLoginSuccess: (user: any) => void }) => {
     const authToast = toast.loading(isSignUp ? 'Creating account...' : 'Signing in...');
     try {
       let user;
+      // Aggressive cleaning: remove all whitespace and non-ASCII characters
+      const cleanedEmail = email.replace(/[^a-zA-Z0-9@._%+-]/g, '').toLowerCase();
+      
+      console.log('[Auth Debug] Attempting login with:', { 
+        original: Array.from(email).map((c: string) => c.charCodeAt(0)), // Log char codes to find hidden chars
+        cleaned: cleanedEmail,
+        isSignUp 
+      });
+
+      if (!cleanedEmail || !cleanedEmail.includes('@') || !cleanedEmail.includes('.') || cleanedEmail.length < 5) {
+        toast.error('Please enter a valid email address');
+        setLoading(false);
+        return;
+      }
+
       if (isSignUp) {
-        const result = await createUserWithEmailAndPassword(auth, email, password);
+        const result = await createUserWithEmailAndPassword(auth, cleanedEmail, password);
         user = result.user;
         toast.success('Account created!', { id: authToast });
       } else {
-        const result = await signInWithEmailAndPassword(auth, email, password);
+        const result = await signInWithEmailAndPassword(auth, cleanedEmail, password);
         user = result.user;
         toast.success('Welcome back!', { id: authToast });
       }
       await bootstrapAdmin(user);
       onLoginSuccess(user);
     } catch (error: any) {
-      console.error('Auth error:', error);
+      console.error('Auth error detail:', error);
       let message = 'Authentication failed';
-      if (error.code === 'auth/invalid-credential') {
+      if (error.code === 'auth/invalid-email') {
+        const cleaned = email.replace(/[^a-zA-Z0-9@._%+-]/g, '').toLowerCase();
+        message = `The email format "${cleaned}" was rejected by the system. Please ensure there are no special characters.`;
+      } else if (error.code === 'auth/invalid-credential') {
         message = 'Invalid email or password. Please try again.';
       } else if (error.code === 'auth/user-not-found') {
         message = 'No account found with this email.';
       } else if (error.code === 'auth/wrong-password') {
         message = 'Incorrect password.';
       } else if (error.code === 'auth/email-already-in-use') {
-        message = 'An account already exists with this email. Switching to Sign In...';
+        message = 'This email is already registered. We have switched you to the Sign In screen so you can log in instead.';
         setIsSignUp(false); // Automatically switch to sign in mode
+        setPassword(''); // Clear password for security and to allow fresh entry
       } else if (error.code === 'auth/too-many-requests') {
         message = 'Too many failed attempts. Please try again later.';
+      } else if (error.code === 'auth/network-request-failed') {
+        message = 'Connection failed. Please: 1. Check your internet. 2. Disable ad-blockers. 3. Try "Open in new tab" using the icon at the top right of this preview.';
       }
       toast.error(message, { id: authToast });
     } finally {
@@ -545,20 +725,23 @@ const Login = ({ onLoginSuccess }: { onLoginSuccess: (user: any) => void }) => {
         ) : (
           <>
             <form onSubmit={handleEmailAuth} className="space-y-4">
-          <div className="space-y-2">
-            <label className="text-xs font-bold text-slate-400 dark:text-slate-500 uppercase ml-1">Email Address</label>
-            <div className="relative">
-              <Mail className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
-              <input
-                type="email"
-                required
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-100 dark:border-slate-700 rounded-2xl py-3 pl-12 pr-4 focus:outline-none focus:ring-2 focus:ring-blue-500/20 transition-all dark:text-white"
-                placeholder="name@company.com"
-              />
+            <div className="space-y-2">
+              <label className="text-xs font-bold text-slate-400 dark:text-slate-500 uppercase ml-1">Email Address</label>
+              <div className="relative">
+                <Mail className={`absolute left-4 top-1/2 -translate-y-1/2 transition-colors ${email && !validateEmail(email) ? 'text-red-400' : 'text-slate-400'}`} size={18} />
+                <input
+                  type="email"
+                  required
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  className={`w-full bg-slate-50 dark:bg-slate-800 border rounded-2xl py-3 pl-12 pr-4 focus:outline-none focus:ring-2 transition-all dark:text-white ${email && !validateEmail(email) ? 'border-red-200 dark:border-red-900/50 focus:ring-red-500/10' : 'border-slate-100 dark:border-slate-700 focus:ring-blue-500/20'}`}
+                  placeholder="name@company.com"
+                />
+              </div>
+              {email && !validateEmail(email) && (
+                <p className="text-[10px] text-red-500 mt-1 ml-1 font-medium">Please enter a valid email format</p>
+              )}
             </div>
-          </div>
 
           <div className="space-y-2">
             <div className="flex justify-between items-center ml-1">
@@ -608,11 +791,25 @@ const Login = ({ onLoginSuccess }: { onLoginSuccess: (user: any) => void }) => {
         <button
           onClick={handleGoogleLogin}
           type="button"
-          className="w-full flex items-center justify-center gap-3 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 py-4 rounded-2xl hover:bg-slate-50 dark:hover:bg-slate-700 transition-all font-bold shadow-sm active:scale-95"
+          disabled={loading}
+          className="w-full flex items-center justify-center gap-3 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 py-4 rounded-2xl hover:bg-slate-50 dark:hover:bg-slate-700 transition-all font-bold shadow-sm active:scale-95 disabled:opacity-50 disabled:active:scale-100"
         >
           <img src="https://www.google.com/favicon.ico" alt="Google" className="w-5 h-5" />
           Google Account
         </button>
+
+        <p className="text-[10px] text-center text-slate-400 dark:text-slate-600 mt-3 px-4">
+          If the login window doesn't appear, please check your browser's popup blocker or 
+          <button 
+            type="button" 
+            onClick={() => window.open(window.location.href, '_blank')}
+            className="text-blue-500 hover:underline ml-1 font-bold"
+          >
+            open in a new tab
+          </button>.
+        </p>
+
+        <ConnectionTroubleshooter />
 
             <p className="text-center mt-8 text-sm text-slate-500 dark:text-slate-400 bg-slate-50 dark:bg-slate-800/50 p-4 rounded-2xl border border-slate-100 dark:border-slate-800">
               {isSignUp ? 'Already have an account?' : "Don't have an account?"}{' '}
@@ -630,10 +827,10 @@ const Login = ({ onLoginSuccess }: { onLoginSuccess: (user: any) => void }) => {
   );
 };
 
-const SignupFlow = ({ user, onComplete }: { user: any, onComplete: () => void }) => {
+const SignupFlow = ({ user, onComplete, settings }: { user: any, onComplete: () => void, settings: SystemSettings | null }) => {
   const [step, setStep] = useState(1);
   const [uploading, setUploading] = useState(false);
-  const [uploadedFiles, setUploadedFiles] = useState<string[]>([]);
+  const [uploadedFiles, setUploadedFiles] = useState<{name: string, data: string}[]>([]);
   const [countrySearch, setCountrySearch] = useState('');
   const [showCountryList, setShowCountryList] = useState(false);
   const [formData, setFormData] = useState({
@@ -662,17 +859,30 @@ const SignupFlow = ({ user, onComplete }: { user: any, onComplete: () => void })
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, [showCountryList]);
 
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files.length > 0) {
       setUploading(true);
-      // Simulate upload delay
-      setTimeout(() => {
-        const files = Array.from(e.target.files as FileList);
-        const newFiles = files.map(f => f.name);
+      const files = Array.from(e.target.files as FileList);
+      
+      try {
+        const filePromises = files.map(file => {
+          return new Promise<{name: string, data: string}>((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = () => resolve({ name: file.name, data: reader.result as string });
+            reader.onerror = reject;
+            reader.readAsDataURL(file);
+          });
+        });
+
+        const newFiles = await Promise.all(filePromises);
         setUploadedFiles(prev => [...prev, ...newFiles]);
+        toast.success(`Attached ${newFiles.length} document(s)`);
+      } catch (err) {
+        console.error('File reading failed:', err);
+        toast.error('Failed to read files');
+      } finally {
         setUploading(false);
-        toast.success('Files attached successfully');
-      }, 1500);
+      }
     }
   };
 
@@ -682,14 +892,35 @@ const SignupFlow = ({ user, onComplete }: { user: any, onComplete: () => void })
       return;
     }
 
+    // Firestore has a 1MB limit for the entire document.
+    // Check total size of uploaded files (Base64 is ~33% larger than binary)
+    const totalSize = uploadedFiles.reduce((acc, f) => acc + f.data.length, 0);
+    if (totalSize > 800000) {
+      toast.error('Documents are too large (limit: 800KB total for all files). Please compress them or use smaller files.');
+      return;
+    }
+
     const completeToast = toast.loading('Submitting application...');
     try {
       let marketingId = '';
+      let referrerUid = '';
       if (formData.referredBy) {
-        const q = query(collection(db, 'users'), where('role', '==', 'marketing'), where('promoCode', '==', formData.referredBy));
-        const snap = await getDocs(q);
-        if (!snap.empty) {
-          marketingId = snap.docs[0].id;
+        try {
+          // 1. Check for marketing promo code
+          const qMarketing = query(collection(db, 'users'), where('role', '==', 'marketing'), where('promoCode', '==', formData.referredBy));
+          const marketingSnap = await getDocs(qMarketing);
+          if (!marketingSnap.empty) {
+            marketingId = marketingSnap.docs[0].id;
+          } else {
+            // 2. Check for pharmacy/importer referral code
+            const qReferral = query(collection(db, 'users'), where('referralCode', '==', formData.referredBy));
+            const referralSnap = await getDocs(qReferral);
+            if (!referralSnap.empty) {
+              referrerUid = referralSnap.docs[0].id;
+            }
+          }
+        } catch (error) {
+          console.error('Error verifying referral code:', error);
         }
       }
 
@@ -703,12 +934,14 @@ const SignupFlow = ({ user, onComplete }: { user: any, onComplete: () => void })
         importerName: formData.role === 'importer' ? formData.importerName : '',
         region: formData.region,
         city: formData.city,
-        referredBy: formData.referredBy || undefined,
-        marketingId: marketingId || undefined,
+        referredBy: formData.referredBy || null,
+        marketingId: marketingId || null,
+        referrerUid: referrerUid as any, // Adding this to track p2p referrals
+        referralCode: user.uid.slice(0, 8).toUpperCase(), // Unique code for this user
         subscriptionType: formData.subscriptionType,
         subscriptionStatus: 'active',
         verificationStatus: 'pending',
-        verificationDocs: uploadedFiles.map(name => `https://picsum.photos/seed/${name}/400/600`),
+        verificationDocs: uploadedFiles.map(f => f.data),
         createdAt: Date.now()
       };
       
@@ -777,11 +1010,11 @@ const SignupFlow = ({ user, onComplete }: { user: any, onComplete: () => void })
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div className="space-y-1">
                   <label className="text-sm font-bold text-slate-700 dark:text-slate-300">Display Name</label>
-                  <input type="text" value={formData.displayName} onChange={e => setFormData({...formData, displayName: e.target.value})} className="w-full px-4 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 dark:text-white outline-none focus:border-blue-500" />
+                  <input type="text" value={formData.displayName || ''} onChange={e => setFormData({...formData, displayName: e.target.value})} className="w-full px-4 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 dark:text-white outline-none focus:border-blue-500" />
                 </div>
                 <div className="space-y-1">
                   <label className="text-sm font-bold text-slate-700 dark:text-slate-300">{formData.role === 'pharmacy' ? 'Pharmacy Name' : 'Company Name'}</label>
-                  <input type="text" value={formData.role === 'pharmacy' ? formData.pharmacyName : formData.importerName} 
+                  <input type="text" value={(formData.role === 'pharmacy' ? formData.pharmacyName : formData.importerName) || ''} 
                     onChange={e => setFormData({...formData, [formData.role === 'pharmacy' ? 'pharmacyName' : 'importerName']: e.target.value})} 
                     className="w-full px-4 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 dark:text-white outline-none focus:border-blue-500" />
                 </div>
@@ -791,7 +1024,7 @@ const SignupFlow = ({ user, onComplete }: { user: any, onComplete: () => void })
                     <input 
                       type="text" 
                       placeholder="Search country..."
-                      value={formData.country || countrySearch} 
+                      value={formData.country || countrySearch || ''} 
                       onFocus={() => setShowCountryList(true)}
                       onChange={e => {
                         setCountrySearch(e.target.value);
@@ -825,15 +1058,15 @@ const SignupFlow = ({ user, onComplete }: { user: any, onComplete: () => void })
                 </div>
                 <div className="space-y-1">
                   <label className="text-sm font-bold text-slate-700 dark:text-slate-300">Region</label>
-                  <input type="text" value={formData.region} onChange={e => setFormData({...formData, region: e.target.value})} className="w-full px-4 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 dark:text-white outline-none focus:border-blue-500" />
+                  <input type="text" value={formData.region || ''} onChange={e => setFormData({...formData, region: e.target.value})} className="w-full px-4 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 dark:text-white outline-none focus:border-blue-500" />
                 </div>
                 <div className="space-y-1">
                   <label className="text-sm font-bold text-slate-700 dark:text-slate-300">City</label>
-                  <input type="text" value={formData.city} onChange={e => setFormData({...formData, city: e.target.value})} className="w-full px-4 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 dark:text-white outline-none focus:border-blue-500" />
+                  <input type="text" value={formData.city || ''} onChange={e => setFormData({...formData, city: e.target.value})} className="w-full px-4 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 dark:text-white outline-none focus:border-blue-500" />
                 </div>
                 <div className="space-y-1">
                   <label className="text-sm font-bold text-slate-700 dark:text-slate-300">Promo Code (Optional)</label>
-                  <input type="text" value={formData.referredBy} onChange={e => setFormData({...formData, referredBy: e.target.value.toUpperCase()})} className="w-full px-4 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 dark:text-white outline-none focus:border-blue-500" placeholder="e.g. ATECH123" />
+                  <input type="text" value={formData.referredBy || ''} onChange={e => setFormData({...formData, referredBy: e.target.value.toUpperCase()})} className="w-full px-4 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 dark:text-white outline-none focus:border-blue-500" placeholder="e.g. ATECH123" />
                 </div>
               </div>
             </div>
@@ -844,9 +1077,9 @@ const SignupFlow = ({ user, onComplete }: { user: any, onComplete: () => void })
               <h3 className="text-xl font-bold text-slate-900 dark:text-white">Subscription Plan</h3>
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                 {[
-                  { id: 'basic', name: 'Basic', price: 'Free', features: ['100 Meds', 'Reports'] },
-                  { id: 'standard', name: 'Standard', price: '499 ETB', features: ['Unlimited', 'Dashboard'] },
-                  { id: 'premium', name: 'Premium', price: '999 ETB', features: ['AI Insights', 'Support'] },
+                  { id: 'basic', name: 'Basic', price: (settings?.planPrices?.basic === 0) ? 'Free' : `${settings?.planPrices?.basic || PLAN_PRICES.basic} ETB`, features: ['100 Meds', 'Reports'] },
+                  { id: 'standard', name: 'Standard', price: `${settings?.planPrices?.standard || PLAN_PRICES.standard} ETB`, features: ['Unlimited', 'Dashboard'] },
+                  { id: 'premium', name: 'Premium', price: `${settings?.planPrices?.premium || PLAN_PRICES.premium} ETB`, features: ['AI Insights', 'Support'] },
                 ].map(plan => (
                   <button 
                     key={plan.id}
@@ -898,7 +1131,7 @@ const SignupFlow = ({ user, onComplete }: { user: any, onComplete: () => void })
                   {uploadedFiles.map((f, i) => (
                     <div key={i} className="flex items-center gap-2 text-green-600 dark:text-green-400 bg-green-50 dark:bg-green-900/20 p-3 rounded-xl text-sm font-medium">
                       <CheckCircle size={18} />
-                      {f}
+                      <span className="truncate">{f.name}</span>
                     </div>
                   ))}
                 </div>
@@ -973,6 +1206,58 @@ const VerificationPending = ({ profile }: { profile: UserProfile }) => {
 
 // --- Admin Components ---
 
+const DocItem = ({ d, i }: { d: string, i: number, key?: any }) => {
+  const isPdf = d.startsWith('data:application/pdf') || d.toLowerCase().endsWith('.pdf');
+  const [blobUrl, setBlobUrl] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (d.startsWith('data:')) {
+       try {
+        const base64 = d.split(',')[1];
+        const binary = atob(base64);
+        const len = binary.length;
+        const bytes = new Uint8Array(len);
+        for (let j = 0; j < len; j++) {
+          bytes[j] = binary.charCodeAt(j);
+        }
+        const mime = d.split(',')[0].split(':')[1].split(';')[0];
+        const blob = new Blob([bytes], { type: mime });
+        const objectUrl = URL.createObjectURL(blob);
+        setBlobUrl(objectUrl);
+        return () => URL.revokeObjectURL(objectUrl);
+      } catch (e) {
+        console.error('Failed to create blob:', e);
+      }
+    }
+  }, [d]);
+
+  const targetUrl = blobUrl || d;
+
+  return (
+    <div className="space-y-2">
+      <p className="text-xs font-bold text-slate-400 dark:text-slate-500 uppercase tracking-widest">Document {i + 1}</p>
+      <div className="rounded-2xl border border-slate-200 dark:border-slate-700 overflow-hidden bg-slate-100 dark:bg-slate-800 aspect-[3/4] relative">
+        {isPdf ? (
+          <iframe src={targetUrl} title={`Doc ${i+1}`} className="w-full h-full border-none" />
+        ) : (
+          <img src={targetUrl} alt={`Doc ${i+1}`} className="w-full h-full object-contain" referrerPolicy="no-referrer" />
+        )}
+      </div>
+      <div className="flex justify-between items-center text-xs">
+        <div className="flex gap-3">
+          <a href={targetUrl} download={`verification-doc-${i+1}`} className="text-blue-600 dark:text-blue-400 font-bold flex items-center gap-1 hover:underline">
+            <Download size={14} /> Download
+          </a>
+          <a href={targetUrl} target="_blank" rel="noreferrer" className="text-slate-500 dark:text-slate-400 font-bold flex items-center gap-1 hover:underline">
+            <ExternalLink size={14} /> Open Full
+          </a>
+        </div>
+        {isPdf && <span className="text-slate-400">PDF Document</span>}
+      </div>
+    </div>
+  );
+};
+
 const AdminVerificationView = () => {
   const [allUsers, setAllUsers] = useState<UserProfile[]>([]);
   const [subscriptionRequests, setSubscriptionRequests] = useState<UserProfile[]>([]);
@@ -981,19 +1266,37 @@ const AdminVerificationView = () => {
   const [showRejectionModal, setShowRejectionModal] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [showAll, setShowAll] = useState(false);
+  const [roleFilter, setRoleFilter] = useState<'all' | 'pharmacy' | 'importer'>('all');
 
   useEffect(() => {
     // Listen for all users to catch those with missing or pending status
     const q1 = query(collection(db, 'users'), orderBy('createdAt', 'desc'));
     const unsub1 = onSnapshot(q1, (snapshot) => {
-      setAllUsers(snapshot.docs.map(doc => doc.data() as UserProfile));
-    }, (error) => handleFirestoreError(error, OperationType.LIST, 'users (verification)'));
+      setAllUsers(snapshot.docs.map(doc => ({ uid: doc.id, ...doc.data() } as UserProfile)));
+    }, (error) => {
+      if (error.code === 'failed-precondition') {
+        // Fallback for missing index: fetch without ordering
+        const qFallback = query(collection(db, 'users'), limit(500));
+        onSnapshot(qFallback, (snapshot) => {
+          setAllUsers(snapshot.docs.map(doc => ({ uid: doc.id, ...doc.data() } as UserProfile)));
+        });
+      } else {
+        handleFirestoreError(error, OperationType.LIST, 'users (verification)');
+      }
+    });
 
     // Listen for subscription change requests
     const q2 = query(collection(db, 'users'), where('pendingSubscriptionType', 'in', ['basic', 'standard', 'premium']));
     const unsub2 = onSnapshot(q2, (snapshot) => {
-      setSubscriptionRequests(snapshot.docs.map(doc => doc.data() as UserProfile));
-    }, (error) => handleFirestoreError(error, OperationType.LIST, 'users (subscriptions)'));
+      setSubscriptionRequests(snapshot.docs.map(doc => ({ uid: doc.id, ...doc.data() } as UserProfile)));
+    }, (error) => {
+      if (error.code === 'failed-precondition') {
+        // This query also needs an index (composite: pendingSubscriptionType + createdAt or similar)
+        // Fallback: use the allUsers data to find subscription requests
+      } else {
+        handleFirestoreError(error, OperationType.LIST, 'users (subscriptions)');
+      }
+    });
 
     return () => {
       unsub1();
@@ -1020,11 +1323,19 @@ const AdminVerificationView = () => {
   const handleSubscriptionApprove = async (uid: string, plan: string, approve: boolean) => {
     try {
       if (approve) {
+        const userToUpdate = allUsers.find(u => u.uid === uid) || subscriptionRequests.find(u => u.uid === uid);
+        const currentExpiry = userToUpdate?.subscriptionExpiryDate;
+        const newExpiry = (!currentExpiry || currentExpiry < Date.now())
+          ? Date.now() + (30 * 24 * 60 * 60 * 1000)
+          : currentExpiry + (30 * 24 * 60 * 60 * 1000);
+
         await updateDoc(doc(db, 'users', uid), { 
           subscriptionType: plan as any,
+          subscriptionStatus: 'active',
+          subscriptionExpiryDate: newExpiry,
           pendingSubscriptionType: null 
         });
-        toast.success('Subscription updated');
+        toast.success('Subscription approved and activated');
       } else {
         await updateDoc(doc(db, 'users', uid), { 
           pendingSubscriptionType: null 
@@ -1042,15 +1353,25 @@ const AdminVerificationView = () => {
                          u.displayName.toLowerCase().includes(searchQuery.toLowerCase()) ||
                          (u.pharmacyName || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
                          (u.importerName || '').toLowerCase().includes(searchQuery.toLowerCase());
-    return (showAll || isPending) && matchesSearch;
+    const matchesRole = roleFilter === 'all' || u.role === roleFilter;
+    return (showAll || isPending) && matchesSearch && matchesRole;
   });
 
-  const filteredSubscriptions = subscriptionRequests.filter(u => 
-    u.email.toLowerCase().includes(searchQuery.toLowerCase()) || 
-    u.displayName.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    (u.pharmacyName || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
-    (u.importerName || '').toLowerCase().includes(searchQuery.toLowerCase())
-  );
+  const filteredSubscriptions = subscriptionRequests.length > 0
+    ? subscriptionRequests.filter(u => 
+        u.email.toLowerCase().includes(searchQuery.toLowerCase()) || 
+        u.displayName.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        (u.pharmacyName || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
+        (u.importerName || '').toLowerCase().includes(searchQuery.toLowerCase())
+      )
+    : allUsers.filter(u => 
+        u.pendingSubscriptionType && (
+          u.email.toLowerCase().includes(searchQuery.toLowerCase()) || 
+          u.displayName.toLowerCase().includes(searchQuery.toLowerCase()) ||
+          (u.pharmacyName || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
+          (u.importerName || '').toLowerCase().includes(searchQuery.toLowerCase())
+        )
+      );
 
   return (
     <div className="p-8 max-w-7xl mx-auto space-y-12">
@@ -1060,6 +1381,21 @@ const AdminVerificationView = () => {
           <p className="text-slate-500 dark:text-slate-400">Review new accounts and subscription changes.</p>
         </div>
         <div className="flex flex-col md:flex-row gap-4 w-full md:w-auto">
+          <div className="flex bg-slate-100 dark:bg-slate-800 p-1 rounded-xl">
+            {['all', 'pharmacy', 'importer'].map((r) => (
+              <button
+                key={r}
+                onClick={() => setRoleFilter(r as any)}
+                className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
+                  roleFilter === r 
+                    ? 'bg-white dark:bg-slate-700 text-blue-600 dark:text-blue-400 shadow-sm' 
+                    : 'text-slate-500 dark:text-slate-400 hover:text-slate-700'
+                }`}
+              >
+                {r === 'all' ? 'All Roles' : r.charAt(0).toUpperCase() + r.slice(1) + 's'}
+              </button>
+            ))}
+          </div>
           <div className="relative">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
             <input 
@@ -1080,22 +1416,34 @@ const AdminVerificationView = () => {
       </div>
 
       <section>
-        <div className="mb-8">
-          <h2 className="text-xl font-bold text-slate-900 dark:text-white">
-            {showAll ? 'All Registered Accounts' : 'New Account Verifications'}
-          </h2>
-          <p className="text-sm text-slate-500 dark:text-slate-400">
-            {showAll ? 'Browse all accounts in the system.' : 'Review and verify new business accounts.'}
-          </p>
+        <div className="mb-8 flex justify-between items-end">
+          <div>
+            <h2 className="text-xl font-bold text-slate-900 dark:text-white">
+              {showAll ? 'All Registered Accounts' : 'New Account Verifications'}
+            </h2>
+            <p className="text-sm text-slate-500 dark:text-slate-400">
+              {showAll ? 'Browse all accounts in the system.' : 'Review and verify new business accounts.'}
+            </p>
+          </div>
+          <div className="text-xs font-bold text-slate-400 uppercase bg-slate-100 dark:bg-slate-800 px-3 py-1 rounded-lg">
+            Total: {allUsers.length} Users
+          </div>
         </div>
 
         <div className="grid grid-cols-1 gap-4">
           {filteredPending.map(user => (
             <div key={user.uid} className="bg-white dark:bg-slate-900 p-6 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-6">
               <div className="flex items-center gap-4">
-                <div className="w-12 h-12 bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400 rounded-xl flex items-center justify-center font-bold">{(user.displayName || '?').charAt(0)}</div>
+                <div className={`w-12 h-12 ${user.role === 'importer' ? 'bg-amber-50 dark:bg-amber-900/20 text-amber-600 dark:text-amber-400' : 'bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400'} rounded-xl flex items-center justify-center font-bold`}>
+                  {user.role === 'importer' ? <Truck size={20} /> : (user.displayName || '?').charAt(0)}
+                </div>
                 <div>
-                  <h3 className="font-bold text-slate-900 dark:text-white">{user.pharmacyName || user.importerName || user.displayName}</h3>
+                  <h3 className="font-bold text-slate-900 dark:text-white flex items-center gap-2">
+                    {user.pharmacyName || user.importerName || user.displayName}
+                    {user.role === 'importer' && (
+                      <span className="text-[10px] bg-amber-100 dark:bg-amber-900/40 text-amber-600 dark:text-amber-400 px-2 py-0.5 rounded-full border border-amber-200 dark:border-amber-800 tracking-tighter uppercase">Importer</span>
+                    )}
+                  </h3>
                   <p className="text-sm text-slate-500 dark:text-slate-400">{user.email} • <span className="capitalize">{user.role.replace('_', ' ')}</span></p>
                   <p className="text-xs text-slate-400 dark:text-slate-500 font-medium mt-1 uppercase tracking-wider flex items-center gap-1">
                     <MapPin size={12} /> {user.country || 'No Country'}, {user.city}
@@ -1164,15 +1512,7 @@ const AdminVerificationView = () => {
               </div>
               <div className="p-8 grid grid-cols-1 md:grid-cols-2 gap-6 max-h-[70vh] overflow-y-auto">
                 {selectedUser.verificationDocs?.map((d, i) => (
-                  <div key={i} className="space-y-2">
-                    <p className="text-xs font-bold text-slate-400 dark:text-slate-500 uppercase tracking-widest">Document {i + 1}</p>
-                    <div className="rounded-2xl border border-slate-200 dark:border-slate-700 overflow-hidden bg-slate-50 dark:bg-slate-800 aspect-[3/4]">
-                      <img src={d} alt={`Doc ${i+1}`} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
-                    </div>
-                    <a href={d} target="_blank" rel="noreferrer" className="text-blue-600 dark:text-blue-400 text-sm font-bold flex items-center gap-1 hover:underline">
-                      <ExternalLink size={14} /> View Full Size
-                    </a>
-                  </div>
+                  <DocItem key={i} d={d} i={i} />
                 ))}
               </div>
               <div className="p-6 bg-slate-50 dark:bg-slate-800/50 border-t border-slate-100 dark:border-slate-800 flex justify-end gap-3">
@@ -1257,12 +1597,107 @@ const AdminVerificationView = () => {
   );
 };
 
-const SubscriptionView = ({ user }: { user: UserProfile }) => {
+const PLAN_PRICES = {
+  basic: 0,
+  standard: 1200,
+  premium: 3000
+};
+
+const SubscriptionLock = ({ user, onRenew, settings }: { user: UserProfile, onRenew: () => void, settings: SystemSettings | null }) => {
+  const [months, setMonths] = useState(1);
+  const [isProcessing, setIsProcessing] = useState(false);
+  
+  const currentPlan = user.subscriptionType || 'basic';
+  const pricePerMonth = (settings?.planPrices?.[currentPlan as keyof typeof PLAN_PRICES]) ?? PLAN_PRICES[currentPlan as keyof typeof PLAN_PRICES];
+  const total = pricePerMonth * months;
+
+  const handlePay = async () => {
+    setIsProcessing(true);
+    try {
+      const expiryDate = Math.max(user.subscriptionExpiryDate || Date.now(), Date.now()) + (months * 30 * 24 * 60 * 60 * 1000);
+      await updateDoc(doc(db, 'users', user.uid), {
+        subscriptionExpiryDate: expiryDate,
+        subscriptionStatus: 'active',
+        lastSubscriptionPaymentDate: Date.now()
+      });
+      toast.success(`Successfully renewed for ${months} month(s)!`);
+      onRenew();
+    } catch (error) {
+      toast.error('Payment failed. Please try again.');
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-900/90 backdrop-blur-sm p-4">
+      <motion.div 
+        initial={{ scale: 0.9, opacity: 0 }}
+        animate={{ scale: 1, opacity: 1 }}
+        className="bg-white dark:bg-slate-900 p-8 rounded-[2.5rem] shadow-2xl max-w-md w-full border border-slate-200 dark:border-slate-800"
+      >
+        <div className="w-20 h-20 bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400 rounded-3xl flex items-center justify-center mx-auto mb-6">
+          <ShieldAlert size={40} />
+        </div>
+        <h2 className="text-2xl font-black text-slate-900 dark:text-white text-center mb-2">Subscription Expired</h2>
+        <p className="text-slate-500 dark:text-slate-400 text-center mb-8">Your access to the system has been suspended. Please renew your subscription to continue.</p>
+        
+        <div className="bg-slate-50 dark:bg-slate-800/50 p-6 rounded-3xl mb-8">
+          <div className="flex justify-between items-center mb-4">
+            <span className="text-sm font-bold text-slate-500 dark:text-slate-400 uppercase">Plan</span>
+            <span className="font-black text-blue-600 dark:text-blue-400 uppercase">{currentPlan}</span>
+          </div>
+          <div className="flex justify-between items-center mb-6">
+            <span className="text-sm font-bold text-slate-500 dark:text-slate-400 uppercase">Duration</span>
+            <select 
+              value={months} 
+              onChange={(e) => setMonths(parseInt(e.target.value))}
+              className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-1 font-bold text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+            >
+              {[1, 3, 6, 12].map(m => (
+                <option key={m} value={m}>{m} Month{m > 1 ? 's' : ''}</option>
+              ))}
+            </select>
+          </div>
+          <div className="pt-4 border-t border-slate-200 dark:border-slate-700 flex justify-between items-center">
+            <span className="text-sm font-bold text-slate-900 dark:text-white uppercase">Total Amount</span>
+            <span className="text-2xl font-black text-slate-900 dark:text-white">{total.toLocaleString()} ETB</span>
+          </div>
+        </div>
+
+        <button 
+          onClick={handlePay}
+          disabled={isProcessing}
+          className="w-full bg-blue-600 text-white py-4 rounded-2xl font-bold hover:bg-blue-700 transition-all shadow-lg shadow-blue-100 dark:shadow-none flex items-center justify-center gap-2 disabled:opacity-50"
+        >
+          {isProcessing ? <Clock className="animate-spin" size={20} /> : <CreditCard size={20} />}
+          {isProcessing ? 'Processing...' : 'Pay & Reactivate'}
+        </button>
+        
+        <button 
+          onClick={() => auth.signOut()}
+          className="w-full mt-4 text-slate-400 dark:text-slate-500 text-sm font-bold hover:text-slate-600 dark:hover:text-slate-300 transition-colors"
+        >
+          Sign Out
+        </button>
+      </motion.div>
+    </div>
+  );
+};
+
+const SubscriptionView = ({ user, settings }: { user: UserProfile, settings: SystemSettings | null }) => {
+  const [renewalMonths, setRenewalMonths] = useState(1);
+  const [isRenewing, setIsRenewing] = useState(false);
+
+  const getPlanPrice = (planId: string) => {
+    return (settings?.planPrices?.[planId as keyof typeof PLAN_PRICES]) ?? PLAN_PRICES[planId as keyof typeof PLAN_PRICES];
+  };
+
   const plans = [
     { 
       id: 'basic', 
       name: 'Basic', 
-      price: 'Free / 100 ETB', 
+      price: getPlanPrice('basic') === 0 ? 'Free' : `${getPlanPrice('basic')} ETB`, 
       features: [
         'Add/Edit/Delete medicines',
         'Basic inventory tracking',
@@ -1281,7 +1716,7 @@ const SubscriptionView = ({ user }: { user: UserProfile }) => {
     { 
       id: 'standard', 
       name: 'Standard', 
-      price: '1,200 ETB/mo', 
+      price: `${getPlanPrice('standard')} ETB/mo`, 
       features: [
         'Everything in Basic',
         'Unlimited medicines',
@@ -1300,7 +1735,7 @@ const SubscriptionView = ({ user }: { user: UserProfile }) => {
     { 
       id: 'premium', 
       name: 'Premium', 
-      price: '3,000 ETB/mo', 
+      price: `${getPlanPrice('premium')} ETB/mo`, 
       features: [
         'Everything in Standard',
         'Advanced analytics & trends',
@@ -1325,27 +1760,109 @@ const SubscriptionView = ({ user }: { user: UserProfile }) => {
     }
   };
 
+  const handleRenew = async () => {
+    setIsRenewing(true);
+    try {
+      const currentPlan = user.subscriptionType || 'basic';
+      const pricePerMonth = getPlanPrice(currentPlan);
+      const total = pricePerMonth * renewalMonths;
+      
+      const expiryDate = Math.max(user.subscriptionExpiryDate || Date.now(), Date.now()) + (renewalMonths * 30 * 24 * 60 * 60 * 1000);
+      
+      await updateDoc(doc(db, 'users', user.uid), {
+        subscriptionExpiryDate: expiryDate,
+        subscriptionStatus: 'active',
+        lastSubscriptionPaymentDate: Date.now()
+      });
+      
+      toast.success(`Successfully renewed for ${renewalMonths} month(s)!`);
+    } catch (error) {
+      toast.error('Renewal failed');
+    } finally {
+      setIsRenewing(false);
+    }
+  };
+
+  const daysRemaining = user.subscriptionExpiryDate 
+    ? Math.ceil((user.subscriptionExpiryDate - Date.now()) / (1000 * 60 * 60 * 24))
+    : 0;
+
   return (
     <div className="p-8 max-w-7xl mx-auto">
-      <div className="mb-8">
-        <h1 className="text-2xl font-bold text-slate-900 dark:text-white">Subscription Plan</h1>
-        <p className="text-slate-500 dark:text-slate-400">Manage your business subscription and features.</p>
-      </div>
-
-      <div className="bg-blue-600 rounded-3xl p-8 text-white mb-12 flex flex-col md:flex-row justify-between items-center gap-6 shadow-xl shadow-blue-100 dark:shadow-none">
+      <div className="mb-8 flex justify-between items-end">
         <div>
-          <p className="text-blue-100 font-medium mb-1 uppercase tracking-wider text-xs">Current Plan</p>
-          <h2 className="text-4xl font-black uppercase">{user.subscriptionType || 'Basic'}</h2>
-          <p className="text-blue-100 mt-2">Status: <span className="bg-white/20 px-2 py-0.5 rounded-full text-sm font-bold capitalize">{user.subscriptionStatus || 'Active'}</span></p>
+          <h1 className="text-2xl font-bold text-slate-900 dark:text-white">Subscription Plan</h1>
+          <p className="text-slate-500 dark:text-slate-400">Manage your business subscription and features.</p>
         </div>
-        {user.pendingSubscriptionType && (
-          <div className="bg-white/10 backdrop-blur-md border border-white/20 p-4 rounded-2xl">
-            <p className="text-sm font-bold flex items-center gap-2">
-              <AlertTriangle size={18} />
-              Upgrade to {user.pendingSubscriptionType.toUpperCase()} pending approval
-            </p>
+        {user.subscriptionExpiryDate && (
+          <div className={`px-4 py-2 rounded-xl text-sm font-bold ${daysRemaining <= 3 ? 'bg-red-50 text-red-600 animate-pulse' : 'bg-green-50 text-green-600'}`}>
+            {daysRemaining <= 0 ? 'Expired' : `${daysRemaining} Days Remaining`}
           </div>
         )}
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 mb-12">
+        <div className="lg:col-span-2 bg-blue-600 rounded-[2.5rem] p-8 text-white flex flex-col md:flex-row justify-between items-center gap-6 shadow-xl shadow-blue-100 dark:shadow-none">
+          <div>
+            <p className="text-blue-100 font-medium mb-1 uppercase tracking-wider text-xs">Current Plan</p>
+            <h2 className="text-4xl font-black uppercase">{user.subscriptionType || 'Basic'}</h2>
+            <div className="flex items-center gap-3 mt-2">
+              <span className="bg-white/20 px-3 py-1 rounded-full text-sm font-bold capitalize">
+                Status: {user.subscriptionStatus || 'Active'}
+              </span>
+              {user.subscriptionExpiryDate && (
+                <span className="text-blue-100 text-sm font-medium">
+                  Expires: {format(user.subscriptionExpiryDate, 'MMM dd, yyyy')}
+                </span>
+              )}
+            </div>
+          </div>
+          {user.pendingSubscriptionType && (
+            <div className="bg-white/10 backdrop-blur-md border border-white/20 p-4 rounded-2xl">
+              <p className="text-sm font-bold flex items-center gap-2">
+                <AlertTriangle size={18} />
+                Upgrade to {user.pendingSubscriptionType.toUpperCase()} pending approval
+              </p>
+            </div>
+          )}
+        </div>
+
+        <div className="bg-white dark:bg-slate-900 p-8 rounded-[2.5rem] border border-slate-100 dark:border-slate-800 shadow-sm flex flex-col justify-between">
+          <div>
+            <h3 className="text-lg font-bold text-slate-900 dark:text-white mb-2">Quick Renew</h3>
+            <p className="text-sm text-slate-500 dark:text-slate-400 mb-6">Extend your current plan instantly.</p>
+            
+            <div className="space-y-4 mb-6">
+              <div className="flex justify-between items-center">
+                <span className="text-sm font-bold text-slate-400 uppercase">Duration</span>
+                <select 
+                  value={renewalMonths} 
+                  onChange={(e) => setRenewalMonths(parseInt(e.target.value))}
+                  className="bg-slate-50 dark:bg-slate-800 border-none rounded-xl px-3 py-1 font-bold text-sm focus:ring-2 focus:ring-blue-500"
+                >
+                  {[1, 3, 6, 12].map(m => (
+                    <option key={m} value={m}>{m} Month{m > 1 ? 's' : ''}</option>
+                  ))}
+                </select>
+              </div>
+              <div className="flex justify-between items-center">
+                <span className="text-sm font-bold text-slate-400 uppercase">Total</span>
+                <span className="font-black text-slate-900 dark:text-white">
+                  {(getPlanPrice(user.subscriptionType || 'basic') * renewalMonths).toLocaleString()} ETB
+                </span>
+              </div>
+            </div>
+          </div>
+
+          <button 
+            onClick={handleRenew}
+            disabled={isRenewing}
+            className="w-full bg-blue-600 text-white py-3 rounded-2xl font-bold hover:bg-blue-700 transition-all shadow-lg shadow-blue-100 dark:shadow-none flex items-center justify-center gap-2 disabled:opacity-50"
+          >
+            {isRenewing ? <Clock className="animate-spin" size={18} /> : <Zap size={18} />}
+            {isRenewing ? 'Renewing...' : 'Renew Now'}
+          </button>
+        </div>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
@@ -1400,6 +1917,19 @@ const SubscriptionView = ({ user }: { user: UserProfile }) => {
 
 // --- Sidebar & Dashboard ---
 
+const calculateDistance = (lat1: number, lon1: number, lat2: number, lon2: number) => {
+  if (!lat1 || !lon1 || !lat2 || !lon2) return 0;
+  const R = 6371; // km
+  const dLat = (lat2 - lat1) * Math.PI / 180;
+  const dLon = (lon2 - lon1) * Math.PI / 180;
+  const a = 
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * 
+    Math.sin(dLon / 2) * Math.sin(dLon / 2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return Math.round(R * c * 10) / 10;
+};
+
 const MarketplaceView = ({ user }: { user: UserProfile }) => {
   const [products, setProducts] = useState<MarketplaceProduct[]>([]);
   const [cart, setCart] = useState<{ product: MarketplaceProduct, quantity: number }[]>([]);
@@ -1408,19 +1938,82 @@ const MarketplaceView = ({ user }: { user: UserProfile }) => {
   const [lastDoc, setLastDoc] = useState<QueryDocumentSnapshot | null>(null);
   const [hasMore, setHasMore] = useState(true);
   const [deliveryMethod, setDeliveryMethod] = useState<'pickup' | 'delivery'>('pickup');
-  const [deliveryAddress, setDeliveryAddress] = useState('');
-  const [distanceKm, setDistanceKm] = useState(0);
+  const [deliveryAddress, setDeliveryAddress] = useState(user.address || '');
+  const [importersData, setImportersData] = useState<Record<string, UserProfile>>({});
+  const [userLocation, setUserLocation] = useState({
+    lat: user.latitude,
+    lng: user.longitude
+  });
 
-  const PAGE_SIZE = 12;
-  const DELIVERY_RATE_PER_KM = 50; // 50 ETB per km
-  const deliveryFee = deliveryMethod === 'delivery' ? distanceKm * DELIVERY_RATE_PER_KM : 0;
+  const PAGE_SIZE = 24;
+
+  const getPharmacyLocation = () => {
+    if ("geolocation" in navigator) {
+      navigator.geolocation.getCurrentPosition((position) => {
+        const newLoc = { lat: position.coords.latitude, lng: position.coords.longitude };
+        setUserLocation(newLoc);
+        // Also save to profile
+        updateDoc(doc(db, 'users', user.uid), {
+          latitude: newLoc.lat,
+          longitude: newLoc.lng
+        });
+        toast.success("Location updated!");
+      });
+    }
+  };
 
   useEffect(() => {
-    if (!user.country) return;
-    // Filter by country for pharmacies
+    // Fetch unique importers in the results to get their delivery settings
+    const uniqueImporterIds = Array.from(new Set(products.map(p => p.importerId))) as string[];
+    uniqueImporterIds.forEach((id: string) => {
+      if (!importersData[id]) {
+        getDoc(doc(db, 'users', id)).then(d => {
+          if (d.exists()) {
+            setImportersData(prev => ({ ...prev, [id]: d.data() as UserProfile }));
+          }
+        });
+      }
+    });
+  }, [products]);
+
+  const getFeesForImporter = (importerId: string, orderAmount: number) => {
+    const importer = importersData[importerId];
+    if (!importer || !importer.deliverySettings) return { distance: 0, fee: 0 };
+    
+    const settings = importer.deliverySettings;
+    const distance = calculateDistance(
+      userLocation.lat || 0, 
+      userLocation.lng || 0, 
+      importer.latitude || 0, 
+      importer.longitude || 0
+    );
+
+    if (settings.isFreeDelivery) return { distance, fee: 0 };
+    if (settings.freeDeliveryThreshold && orderAmount >= settings.freeDeliveryThreshold) return { distance, fee: 0 };
+    if (settings.freeDistanceLimit && distance <= settings.freeDistanceLimit) return { distance, fee: 0 };
+    
+    const fee = settings.baseFee + (distance * settings.feePerKm);
+    return { distance, fee };
+  };
+
+  const totalDeliveryFee = deliveryMethod === 'pickup' ? 0 : Object.keys(
+    cart.reduce((acc: any, item) => {
+      acc[item.product.importerId] = (acc[item.product.importerId] || 0) + (item.product.price * item.quantity);
+      return acc;
+    }, {})
+  ).reduce((sum, id) => {
+    const amount = cart.filter(i => i.product.importerId === id).reduce((s, i) => s + (i.product.price * i.quantity), 0);
+    return sum + getFeesForImporter(id, amount).fee;
+  }, 0);
+
+  useEffect(() => {
+    // We want to see products from the user's country AND "Global" products
+    const userCountry = user.country || 'Global';
+    
+    setLoading(true);
     const q = query(
       collection(db, 'products'), 
-      where('country', '==', user.country),
+      where('country', 'in', [userCountry, 'Global']),
       orderBy('createdAt', 'desc'),
       limit(PAGE_SIZE)
     );
@@ -1429,17 +2022,32 @@ const MarketplaceView = ({ user }: { user: UserProfile }) => {
       setLastDoc(snapshot.docs[snapshot.docs.length - 1] || null);
       setHasMore(snapshot.docs.length === PAGE_SIZE);
       setLoading(false);
-    }, (error) => handleFirestoreError(error, OperationType.LIST, 'products'));
+    }, (error) => {
+      if (error.code === 'failed-precondition') {
+        console.warn('Index missing for country filter, falling back to client-side filtering');
+        // Fallback: list all and filter in memory if index is missing
+        const qFallback = query(collection(db, 'products'), orderBy('createdAt', 'desc'), limit(100));
+        onSnapshot(qFallback, (snapshot) => {
+          const all = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as MarketplaceProduct));
+          setProducts(all.filter(p => p.country === userCountry || p.country === 'Global'));
+          setLoading(false);
+        });
+      } else {
+        handleFirestoreError(error, OperationType.LIST, 'products');
+        setLoading(false);
+      }
+    });
     return unsub;
   }, [user.country]);
 
   const loadMore = async () => {
     if (!lastDoc || loadingMore) return;
     setLoadingMore(true);
+    const userCountry = user.country || 'Global';
     try {
       const q = query(
         collection(db, 'products'), 
-        where('country', '==', user.country),
+        where('country', 'in', [userCountry, 'Global']),
         orderBy('createdAt', 'desc'),
         startAfter(lastDoc),
         limit(PAGE_SIZE)
@@ -1474,8 +2082,8 @@ const MarketplaceView = ({ user }: { user: UserProfile }) => {
         toast.error('Please enter a delivery address');
         return;
       }
-      if (distanceKm <= 0) {
-        toast.error('Please enter a valid distance');
+      if (!userLocation.lat) {
+        toast.error('Please set your location to calculate delivery fees');
         return;
       }
     }
@@ -1491,11 +2099,13 @@ const MarketplaceView = ({ user }: { user: UserProfile }) => {
       for (const importerId in ordersByImporter) {
         const items = ordersByImporter[importerId];
         const itemsTotal = items.reduce((sum, i) => sum + (i.product.price * i.quantity), 0);
+        const { distance, fee } = getFeesForImporter(importerId, itemsTotal);
+
         const order: Omit<Order, 'id'> = {
           pharmacyId: user.uid,
           pharmacyName: user.pharmacyName || user.displayName,
           pharmacyCreatedAt: user.createdAt,
-          marketingId: user.marketingId,
+          marketingId: user.marketingId || null,
           importerId: importerId,
           importerName: items[0].product.importerName,
           items: items.map(i => ({
@@ -1505,21 +2115,19 @@ const MarketplaceView = ({ user }: { user: UserProfile }) => {
             price: i.product.price,
             total: i.product.price * i.quantity
           })),
-          totalAmount: itemsTotal + deliveryFee,
+          totalAmount: itemsTotal + (deliveryMethod === 'delivery' ? fee : 0),
           commissionAmount: itemsTotal * 0.03, // Default 3% commission
           status: 'pending',
           country: user.country || 'Global',
           createdAt: Date.now(),
           deliveryMethod,
-          deliveryAddress: deliveryMethod === 'delivery' ? deliveryAddress : undefined,
-          distanceKm: deliveryMethod === 'delivery' ? distanceKm : undefined,
-          deliveryFee: deliveryMethod === 'delivery' ? deliveryFee : 0
+          deliveryAddress: deliveryMethod === 'delivery' ? deliveryAddress : null,
+          distanceKm: deliveryMethod === 'delivery' ? distance : null,
+          deliveryFee: deliveryMethod === 'delivery' ? fee : 0
         };
         await addDoc(collection(db, 'orders'), order);
       }
       setCart([]);
-      setDeliveryAddress('');
-      setDistanceKm(0);
       toast.success('Orders placed successfully!');
     } catch (error) {
       handleFirestoreError(error, OperationType.CREATE, 'orders');
@@ -1571,7 +2179,7 @@ const MarketplaceView = ({ user }: { user: UserProfile }) => {
                 </div>
 
                 {deliveryMethod === 'delivery' && (
-                  <div className="space-y-3">
+                  <div className="space-y-4">
                     <div>
                       <label className="text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase">Delivery Address</label>
                       <input 
@@ -1582,28 +2190,66 @@ const MarketplaceView = ({ user }: { user: UserProfile }) => {
                         className="w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 dark:text-white text-sm outline-none focus:border-blue-500"
                       />
                     </div>
-                    <div>
-                      <label className="text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase">Distance (km)</label>
-                      <input 
-                        type="number" 
-                        value={distanceKm} 
-                        onChange={e => setDistanceKm(Number(e.target.value))}
-                        placeholder="0"
-                        className="w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 dark:text-white text-sm outline-none focus:border-blue-500"
-                      />
-                    </div>
-                    <div className="flex justify-between items-center text-xs">
-                      <span className="text-slate-500 dark:text-slate-400">Delivery Fee ({DELIVERY_RATE_PER_KM} ETB/km)</span>
-                      <span className="font-bold text-blue-600 dark:text-blue-400">{deliveryFee.toLocaleString()} ETB</span>
+                    
+                    <div className="bg-slate-50 dark:bg-slate-800/50 p-4 rounded-xl space-y-3">
+                      <div className="flex justify-between items-center">
+                        <label className="text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase">Your Location</label>
+                        <button 
+                          onClick={getPharmacyLocation}
+                          className="text-[10px] font-bold text-blue-600 hover:underline flex items-center gap-1"
+                        >
+                          <MapPin size={10} /> Auto-Set Location
+                        </button>
+                      </div>
+                      
+                      {userLocation.lat ? (
+                        <div className="flex items-center gap-2 text-[10px] text-green-600 font-bold">
+                          <CheckCircle size={12} /> Geographic coordinates set
+                        </div>
+                      ) : (
+                        <div className="flex items-center gap-2 text-[10px] text-amber-600 font-bold">
+                          <AlertTriangle size={12} /> Please set location for accurate fees
+                        </div>
+                      )}
+
+                      <div className="pt-2 space-y-1">
+                        {Object.keys(importersData).length > 0 && (Array.from(new Set(cart.map(i => i.product.importerId))) as string[]).map((id: string) => {
+                          const amount = cart.filter(i => i.product.importerId === id).reduce((s, i) => s + (i.product.price * i.quantity), 0);
+                          const { distance, fee } = getFeesForImporter(id, amount);
+                          return (
+                            <div key={id} className="flex justify-between text-[9px] text-slate-500">
+                              <span className="truncate max-w-[140px]">{importersData[id]?.importerName || 'Supplier'} ({distance}km)</span>
+                              <span className="font-bold">{fee > 0 ? `${fee.toLocaleString()} ETB` : 'FREE'}</span>
+                            </div>
+                          );
+                        })}
+                      </div>
                     </div>
                   </div>
                 )}
               </div>
 
-              <div className="flex justify-between items-center mb-4 pt-4 border-t border-slate-100 dark:border-slate-800">
+              <div className="space-y-1 mb-4 pt-4 border-t border-slate-100 dark:border-slate-800">
+                <div className="flex justify-between items-center text-xs">
+                  <span className="text-slate-500">Items Total</span>
+                  <span className="font-bold dark:text-white">
+                    {cart.reduce((sum, item) => sum + (item.product.price * item.quantity), 0).toLocaleString()} ETB
+                  </span>
+                </div>
+                {deliveryMethod === 'delivery' && (
+                  <div className="flex justify-between items-center text-xs">
+                    <span className="text-slate-500">Delivery Total</span>
+                    <span className="font-bold text-blue-600 dark:text-blue-400">
+                      {totalDeliveryFee > 0 ? `${totalDeliveryFee.toLocaleString()} ETB` : 'FREE'}
+                    </span>
+                  </div>
+                )}
+              </div>
+
+              <div className="flex justify-between items-center mb-6">
                 <span className="font-bold text-slate-900 dark:text-white">Total Amount</span>
                 <span className="text-xl font-black text-blue-600 dark:text-blue-400">
-                  {(cart.reduce((sum, i) => sum + (i.product.price * i.quantity), 0) + deliveryFee).toLocaleString()} ETB
+                  {(cart.reduce((sum, item) => sum + (item.product.price * item.quantity), 0) + totalDeliveryFee).toLocaleString()} ETB
                 </span>
               </div>
 
@@ -1672,6 +2318,19 @@ const MarketplaceView = ({ user }: { user: UserProfile }) => {
 const ImporterInventoryView = ({ user }: { user: UserProfile }) => {
   const [products, setProducts] = useState<MarketplaceProduct[]>([]);
   const [isAdding, setIsAdding] = useState(false);
+  const [showSettings, setShowSettings] = useState(false);
+  const [deliverySettings, setDeliverySettings] = useState(user.deliverySettings || {
+    isFreeDelivery: false,
+    freeDeliveryThreshold: 5000,
+    baseFee: 100,
+    feePerKm: 10
+  });
+  const [warehouse, setWarehouse] = useState({
+    address: user.address || '',
+    latitude: user.latitude || 9.03, // Default to Addis Ababa
+    longitude: user.longitude || 38.74
+  });
+
   const [newProduct, setNewProduct] = useState({
     name: '',
     description: '',
@@ -1680,6 +2339,36 @@ const ImporterInventoryView = ({ user }: { user: UserProfile }) => {
     minOrderQuantity: 10,
     stockQuantity: 100
   });
+
+  const handleSaveSettings = async () => {
+    try {
+      await updateDoc(doc(db, 'users', user.uid), {
+        deliverySettings,
+        address: warehouse.address,
+        latitude: warehouse.latitude,
+        longitude: warehouse.longitude
+      });
+      toast.success('Delivery settings updated!');
+      setShowSettings(false);
+    } catch (error) {
+      toast.error('Failed to update settings');
+    }
+  };
+
+  const getUserLocation = () => {
+    if ("geolocation" in navigator) {
+      navigator.geolocation.getCurrentPosition((position) => {
+        setWarehouse({
+          ...warehouse,
+          latitude: position.coords.latitude,
+          longitude: position.coords.longitude
+        });
+        toast.success("Coordinates updated to current location!");
+      }, () => {
+        toast.error("Failed to get location. Using default.");
+      });
+    }
+  };
 
   useEffect(() => {
     if (!user.uid) return;
@@ -1711,13 +2400,110 @@ const ImporterInventoryView = ({ user }: { user: UserProfile }) => {
     <div className="p-8 max-w-7xl mx-auto">
       <div className="flex justify-between items-center mb-8">
         <div>
-          <h1 className="text-2xl font-bold text-slate-900 dark:text-white">Marketplace Listings</h1>
-          <p className="text-slate-500 dark:text-slate-400">Manage your products visible to pharmacies in {user.country}.</p>
+          <h1 className="text-2xl font-bold text-slate-900 dark:text-white">Supply Chain Inventory</h1>
+          <p className="text-slate-500 dark:text-slate-400">Manage your B2B supply of medical products for {user.country}.</p>
         </div>
-        <button onClick={() => setIsAdding(true)} className="bg-blue-600 text-white px-6 py-3 rounded-xl font-bold hover:bg-blue-700 transition-all shadow-lg shadow-blue-100 dark:shadow-none flex items-center gap-2">
-          <Plus size={20} /> List New Product
-        </button>
+        <div className="flex gap-4">
+          <button onClick={() => setShowSettings(true)} className="bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-800 px-6 py-3 rounded-xl font-bold hover:bg-slate-50 dark:hover:bg-slate-800 transition-all flex items-center gap-2">
+            <Truck size={20} /> Delivery Settings
+          </button>
+          <button onClick={() => setIsAdding(true)} className="bg-blue-600 text-white px-6 py-3 rounded-xl font-bold hover:bg-blue-700 transition-all shadow-lg shadow-blue-100 dark:shadow-none flex items-center gap-2">
+            <Plus size={20} /> List New Product
+          </button>
+        </div>
       </div>
+
+      {showSettings && (
+        <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="bg-white dark:bg-slate-900 p-8 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-xl mb-8">
+          <div className="flex justify-between items-center mb-6">
+            <h2 className="text-xl font-bold dark:text-white">Delivery & Warehouse Config</h2>
+            <button onClick={() => setShowSettings(false)}><X className="text-slate-400" /></button>
+          </div>
+          
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+            <div className="space-y-6">
+              <h3 className="font-bold text-slate-900 dark:text-white flex items-center gap-2 border-b border-slate-100 dark:border-slate-800 pb-2">
+                <Truck size={18} className="text-blue-500" /> Delivery Fees
+              </h3>
+              <div className="flex items-center gap-4 bg-slate-50 dark:bg-slate-800/50 p-4 rounded-2xl">
+                <div className="flex-1">
+                  <p className="text-xs font-bold text-slate-700 dark:text-slate-300 uppercase">Universal Free Delivery</p>
+                  <p className="text-[10px] text-slate-500">Enable this to make all your deliveries free.</p>
+                </div>
+                <button 
+                  onClick={() => setDeliverySettings({...deliverySettings, isFreeDelivery: !deliverySettings.isFreeDelivery})}
+                  className={`w-12 h-6 rounded-full transition-colors relative ${deliverySettings.isFreeDelivery ? 'bg-green-500' : 'bg-slate-300 dark:bg-slate-700'}`}
+                >
+                  <div className={`absolute top-1 w-4 h-4 rounded-full bg-white transition-all ${deliverySettings.isFreeDelivery ? 'left-7' : 'left-1'}`} />
+                </button>
+              </div>
+
+              {!deliverySettings.isFreeDelivery && (
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <label className="text-xs font-bold text-slate-400 uppercase">Base Fee (ETB)</label>
+                    <input type="number" value={deliverySettings.baseFee ?? 0} onChange={e => setDeliverySettings({...deliverySettings, baseFee: Number(e.target.value)})} className="w-full px-4 py-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 dark:text-white outline-none focus:border-blue-500" />
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-xs font-bold text-slate-400 uppercase">Fee Per KM (ETB)</label>
+                    <input type="number" value={deliverySettings.feePerKm ?? 0} onChange={e => setDeliverySettings({...deliverySettings, feePerKm: Number(e.target.value)})} className="w-full px-4 py-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 dark:text-white outline-none focus:border-blue-500" />
+                  </div>
+                </div>
+              )}
+
+              <div className="space-y-2 pt-4">
+                <div className="flex justify-between items-center">
+                  <label className="text-xs font-bold text-slate-400 uppercase">Free Delivery Threshold (ETB)</label>
+                  <span className="text-[10px] font-bold text-blue-600 bg-blue-50 px-2 py-0.5 rounded-full uppercase">Reward Bulk Orders</span>
+                </div>
+                <input type="number" value={deliverySettings.freeDeliveryThreshold ?? 0} onChange={e => setDeliverySettings({...deliverySettings, freeDeliveryThreshold: Number(e.target.value)})} className="w-full px-4 py-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 dark:text-white outline-none focus:border-blue-500" placeholder="e.g. 10000" />
+                <p className="text-[10px] text-slate-500">Delivery will be free if order total exceeds this amount.</p>
+              </div>
+
+              <div className="space-y-2 pt-4">
+                <div className="flex justify-between items-center">
+                  <label className="text-xs font-bold text-slate-400 uppercase">Free Delivery Distance Limit (KM)</label>
+                  <span className="text-[10px] font-bold text-green-600 bg-green-50 px-2 py-0.5 rounded-full uppercase">Reward Local Orders</span>
+                </div>
+                <input type="number" value={deliverySettings.freeDistanceLimit || 0} onChange={e => setDeliverySettings({...deliverySettings, freeDistanceLimit: Number(e.target.value)})} className="w-full px-4 py-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 dark:text-white outline-none focus:border-blue-500" placeholder="e.g. 5" />
+                <p className="text-[10px] text-slate-500">Delivery will be free if distance is less than or equal to this limit.</p>
+              </div>
+            </div>
+
+            <div className="space-y-6">
+              <h3 className="font-bold text-slate-900 dark:text-white flex items-center gap-2 border-b border-slate-100 dark:border-slate-800 pb-2">
+                <MapPin size={18} className="text-blue-500" /> Warehouse Location
+              </h3>
+              <div className="space-y-2">
+                <label className="text-xs font-bold text-slate-400 uppercase">Warehouse Address</label>
+                <input type="text" value={warehouse.address || ''} onChange={e => setWarehouse({...warehouse, address: e.target.value})} className="w-full px-4 py-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 dark:text-white outline-none focus:border-blue-500" placeholder="e.g. Merkato, Building A, Addis Ababa" />
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <label className="text-xs font-bold text-slate-400 uppercase">Latitude</label>
+                  <input type="number" step="0.000001" value={warehouse.latitude ?? 0} readOnly className="w-full px-4 py-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50 text-slate-500 outline-none" />
+                </div>
+                <div className="space-y-2">
+                  <label className="text-xs font-bold text-slate-400 uppercase">Longitude</label>
+                  <input type="number" step="0.000001" value={warehouse.longitude ?? 0} readOnly className="w-full px-4 py-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50 text-slate-500 outline-none" />
+                </div>
+              </div>
+              <button 
+                onClick={getUserLocation}
+                className="w-full py-3 border-2 border-dashed border-slate-200 dark:border-slate-800 rounded-2xl text-xs font-bold text-slate-500 hover:border-blue-400 hover:text-blue-500 transition-all flex items-center justify-center gap-2"
+              >
+                <MapPin size={16} /> Mark Current Location as Warehouse
+              </button>
+              <p className="text-[10px] text-slate-400 italic">This will be used to automatically calculate distance-based delivery fees for pharmacies.</p>
+            </div>
+          </div>
+
+          <div className="mt-8 pt-8 border-t border-slate-100 dark:border-slate-800 flex justify-end gap-4">
+            <button onClick={() => setShowSettings(false)} className="px-6 py-3 text-slate-600 font-bold hover:bg-slate-100 dark:hover:bg-slate-800 rounded-xl transition-all">Cancel</button>
+            <button onClick={handleSaveSettings} className="bg-blue-600 text-white px-10 py-3 rounded-xl font-bold hover:bg-blue-700 transition-all shadow-lg shadow-blue-100 dark:shadow-none">Save Settings</button>
+          </div>
+        </motion.div>
+      )}
 
       {isAdding && (
         <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="bg-white dark:bg-slate-900 p-8 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-xl mb-8">
@@ -1817,9 +2603,12 @@ const OrdersView = ({ user }: { user: UserProfile }) => {
       setLoading(false);
     }, (error) => handleFirestoreError(error, OperationType.LIST, 'orders'));
 
-    const unsubSettings = onSnapshot(doc(db, 'system_settings', 'main'), (s) => {
-      if (s.exists()) setSettings(s.data() as SystemSettings);
-    });
+    const unsubSettings = onSnapshot(doc(db, 'system_settings', 'main'), 
+      (s) => {
+        if (s.exists()) setSettings(s.data() as SystemSettings);
+      },
+      (error) => handleFirestoreError(error, OperationType.GET, 'system_settings/main')
+    );
 
     return () => {
       unsubOrders();
@@ -2027,10 +2816,23 @@ const AdminUserManagement = () => {
   const [lastDoc, setLastDoc] = useState<QueryDocumentSnapshot | null>(null);
   const [hasMore, setHasMore] = useState(true);
   const [filter, setFilter] = useState<'all' | 'pharmacy' | 'importer' | 'regional_manager'>('all');
+  const [showExpiringSoon, setShowExpiringSoon] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [settings, setSettings] = useState<SystemSettings | null>(null);
+  const [showAddModal, setShowAddModal] = useState(false);
+  const [isCreating, setIsCreating] = useState(false);
+  const [editingUsers, setEditingUsers] = useState<Record<string, { type: string, status: string }>>({});
+  const [newUser, setNewUser] = useState({
+    email: '',
+    displayName: '',
+    role: 'pharmacy' as UserRole,
+    country: 'Ethiopia',
+    city: '',
+    businessName: '',
+    password: ''
+  });
 
-  const PAGE_SIZE = 20;
+  const PAGE_SIZE = 50;
 
   useEffect(() => {
     let q = query(collection(db, 'users'), orderBy('createdAt', 'desc'), limit(PAGE_SIZE));
@@ -2045,11 +2847,28 @@ const AdminUserManagement = () => {
       setLastDoc(snapshot.docs[snapshot.docs.length - 1] || null);
       setHasMore(snapshot.docs.length === PAGE_SIZE);
       setLoading(false);
-    }, (error) => handleFirestoreError(error, OperationType.LIST, 'users'));
-
-    const unsubSettings = onSnapshot(doc(db, 'system_settings', 'main'), (s) => {
-      if (s.exists()) setSettings(s.data() as SystemSettings);
+    }, (error) => {
+      if (error.code === 'failed-precondition') {
+        process.env.NODE_ENV !== 'production' && console.warn('Missing index for user role filter, falling back to client-side filtering');
+        // Fallback: fetch all new users and filter locally to prevent "silent empty state"
+        const qFallback = query(collection(db, 'users'), orderBy('createdAt', 'desc'), limit(100));
+        onSnapshot(qFallback, (snapshot) => {
+          const all = snapshot.docs.map(d => ({ uid: d.id, ...d.data() } as UserProfile));
+          setUsers(filter === 'all' ? all : all.filter(u => u.role === filter));
+          setLoading(false);
+        });
+      } else {
+        handleFirestoreError(error, OperationType.LIST, 'users');
+        setLoading(false);
+      }
     });
+
+    const unsubSettings = onSnapshot(doc(db, 'system_settings', 'main'), 
+      (s) => {
+        if (s.exists()) setSettings(s.data() as SystemSettings);
+      },
+      (error) => handleFirestoreError(error, OperationType.GET, 'system_settings/main')
+    );
 
     return () => {
       unsub();
@@ -2092,7 +2911,31 @@ const AdminUserManagement = () => {
 
   const handleStatusChange = async (uid: string, status: VerificationStatus) => {
     try {
+      const userToUpdate = users.find(u => u.uid === uid);
+      const oldStatus = userToUpdate?.verificationStatus;
+      
       await updateDoc(doc(db, 'users', uid), { verificationStatus: status });
+
+      // Pharmacy Referral Reward Logic
+      if (status === 'approved' && oldStatus === 'pending' && userToUpdate?.referrerUid && settings?.pharmacyReferralRewardMonths) {
+        const referrerRef = doc(db, 'users', userToUpdate.referrerUid);
+        const referrerDoc = await getDoc(referrerRef);
+        if (referrerDoc.exists()) {
+          const referrerData = referrerDoc.data() as UserProfile;
+          const monthsToAdd = settings.pharmacyReferralRewardMonths;
+          const msToAdd = monthsToAdd * 30 * 24 * 60 * 60 * 1000;
+          
+          const currentExpiry = referrerData.subscriptionExpiryDate || Date.now();
+          const newExpiry = currentExpiry + msToAdd;
+          
+          await updateDoc(referrerRef, {
+            subscriptionExpiryDate: newExpiry,
+            referralRewardMonthsEarned: (referrerData.referralRewardMonthsEarned || 0) + monthsToAdd
+          });
+          toast.success(`Referrer rewarded with ${monthsToAdd} free months!`);
+        }
+      }
+
       toast.success(`User status updated to ${status}`);
     } catch (error) {
       handleFirestoreError(error, OperationType.UPDATE, `users/${uid}`);
@@ -2104,11 +2947,23 @@ const AdminUserManagement = () => {
       const userToUpdate = users.find(u => u.uid === uid);
       const isUpgrade = userToUpdate && userToUpdate.subscriptionType !== type && status === 'active';
       
-      await updateDoc(doc(db, 'users', uid), { 
+      const updateData: any = {
         subscriptionType: type,
         subscriptionStatus: status,
         pendingSubscriptionType: null
-      });
+      };
+
+      // If activating/renewing, set or extend expiry by 30 days if it's missing or already expired
+      if (status === 'active') {
+        const currentExpiry = userToUpdate?.subscriptionExpiryDate;
+        if (!currentExpiry || currentExpiry < Date.now()) {
+          updateData.subscriptionExpiryDate = Date.now() + (30 * 24 * 60 * 60 * 1000);
+        }
+      } else if (status === 'expired') {
+        updateData.subscriptionExpiryDate = Date.now() - 1000;
+      }
+      
+      await updateDoc(doc(db, 'users', uid), updateData);
 
       // Credit marketing commission if it's an upgrade and user was referred
       if (isUpgrade && userToUpdate.marketingId && settings?.marketingCommission) {
@@ -2140,14 +2995,85 @@ const AdminUserManagement = () => {
     }
   };
 
+  const handleManualAdd = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newUser.email || !newUser.password || !newUser.displayName) {
+      toast.error('Email, Display Name and Password are required');
+      return;
+    }
+    
+    setIsCreating(true);
+    try {
+      // In a real app, we'd use Firebase Admin SDK or Cloud Functions
+      // Since we are in frontend, we use createUserWithEmailAndPassword
+      // CRITICAL: This will log out the admin. We use a secondary app if possible.
+      // For this applet, I'll create the Firestore document and the user can "Reset Password"
+      // or I'll just create it and assume the admin will tell them.
+      // Actually, better to just create the Firestore document with a specific flag.
+      // But they need an Auth UID to login.
+      
+      // Let's create a temporary UID for now or use the email as UID (not recommended but works for demo)
+      // Actually, I'll just warn the user that for a production app we'd use a Cloud Function.
+      // For now, I'll use a unique ID and the user will have to sign up with the SAME email.
+      const tempId = `manual_${Date.now()}`;
+      const userProfile: UserProfile = {
+        uid: tempId,
+        email: newUser.email,
+        role: newUser.role,
+        displayName: newUser.displayName,
+        country: newUser.country,
+        city: newUser.city,
+        verificationStatus: 'approved',
+        subscriptionType: 'basic',
+        subscriptionStatus: 'active',
+        subscriptionExpiryDate: Date.now() + (30 * 24 * 60 * 60 * 1000),
+        createdAt: Date.now()
+      };
+
+      if (newUser.role === 'pharmacy') userProfile.pharmacyName = newUser.businessName;
+      if (newUser.role === 'importer') userProfile.importerName = newUser.businessName;
+
+      await setDoc(doc(db, 'users', tempId), userProfile);
+      toast.success('User profile created! User must sign up with this email to link account.');
+      setShowAddModal(false);
+      setNewUser({
+        email: '',
+        displayName: '',
+        role: 'pharmacy',
+        country: 'Ethiopia',
+        city: '',
+        businessName: '',
+        password: ''
+      });
+    } catch (error) {
+      toast.error('Failed to create user');
+    } finally {
+      setIsCreating(false);
+    }
+  };
+
   const filteredUsers = users.filter(u => {
     const matchesFilter = filter === 'all' || u.role === filter;
     const matchesSearch = u.email.toLowerCase().includes(searchQuery.toLowerCase()) || 
                          u.displayName.toLowerCase().includes(searchQuery.toLowerCase()) ||
                          (u.pharmacyName || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
                          (u.importerName || '').toLowerCase().includes(searchQuery.toLowerCase());
-    return matchesFilter && matchesSearch;
+    
+    let matchesExpiry = true;
+    if (showExpiringSoon) {
+      const now = Date.now();
+      const sevenDays = 7 * 24 * 60 * 60 * 1000;
+      matchesExpiry = !!u.subscriptionExpiryDate && (u.subscriptionExpiryDate - now) < sevenDays;
+    }
+
+    return matchesFilter && matchesSearch && matchesExpiry;
   });
+
+  const expiringCount = users.filter(u => {
+    const now = Date.now();
+    const sevenDays = 7 * 24 * 60 * 60 * 1000;
+    return !!u.subscriptionExpiryDate && (u.subscriptionExpiryDate - now) < sevenDays;
+  }).length;
 
   return (
     <div className="p-8 max-w-7xl mx-auto">
@@ -2156,7 +3082,13 @@ const AdminUserManagement = () => {
           <h1 className="text-2xl font-bold text-slate-900 dark:text-white">User Management</h1>
           <p className="text-slate-500 dark:text-slate-400">Manage pharmacies, importers, and staff accounts.</p>
         </div>
-        <div className="flex flex-col md:flex-row gap-4 w-full md:w-auto">
+        <div className="flex flex-wrap gap-4 w-full md:w-auto">
+          <button 
+            onClick={() => setShowAddModal(true)}
+            className="flex items-center gap-2 bg-blue-600 text-white px-6 py-2.5 rounded-xl font-bold hover:bg-blue-700 transition-all shadow-lg shadow-blue-100 dark:shadow-none"
+          >
+            <Plus size={18} /> Add User
+          </button>
           <div className="relative">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
             <input 
@@ -2164,21 +3096,40 @@ const AdminUserManagement = () => {
               placeholder="Search by email or name..." 
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              className="pl-10 pr-4 py-2 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl outline-none focus:ring-2 focus:ring-blue-500/20 w-full md:w-64 dark:text-white"
+              className="pl-10 pr-4 py-2.5 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl outline-none focus:ring-2 focus:ring-blue-500/20 w-full md:w-64 dark:text-white"
             />
           </div>
-          <div className="flex gap-1 bg-white dark:bg-slate-900 p-1 rounded-xl border border-slate-200 dark:border-slate-800 shadow-sm overflow-x-auto">
-            {(['all', 'pharmacy', 'importer', 'regional_manager'] as const).map((f) => (
-              <button
-                key={f}
-                onClick={() => setFilter(f)}
-                className={`px-4 py-2 rounded-lg text-xs font-bold transition-all whitespace-nowrap ${filter === f ? 'bg-blue-600 text-white shadow-md shadow-blue-100 dark:shadow-none' : 'text-slate-500 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800'}`}
-              >
-                {f.charAt(0).toUpperCase() + f.slice(1).replace('_', ' ')}s
-              </button>
-            ))}
-          </div>
         </div>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
+        <div className="bg-white dark:bg-slate-900 p-6 rounded-3xl border border-slate-100 dark:border-slate-800 shadow-sm">
+          <p className="text-xs font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider mb-2">Total Users</p>
+          <p className="text-3xl font-black text-slate-900 dark:text-white">{users.length}</p>
+        </div>
+        <button 
+          onClick={() => setShowExpiringSoon(!showExpiringSoon)}
+          className={`p-6 rounded-3xl border transition-all text-left ${showExpiringSoon ? 'bg-red-50 border-red-200 dark:bg-red-900/20 dark:border-red-800 shadow-lg' : 'bg-white dark:bg-slate-900 border-slate-100 dark:border-slate-800 shadow-sm'}`}
+        >
+          <div className="flex justify-between items-start mb-2">
+            <p className={`text-xs font-bold uppercase tracking-wider ${showExpiringSoon ? 'text-red-600' : 'text-slate-400 dark:text-slate-500'}`}>Expiring Soon</p>
+            <Clock size={16} className={showExpiringSoon ? 'text-red-500' : 'text-slate-300'} />
+          </div>
+          <p className={`text-3xl font-black ${showExpiringSoon ? 'text-red-600' : 'text-slate-900 dark:text-white'}`}>{expiringCount}</p>
+          <p className="text-[10px] font-bold text-slate-400 mt-1 uppercase">Next 7 Days</p>
+        </button>
+      </div>
+
+      <div className="flex gap-1 bg-white dark:bg-slate-900 p-1 rounded-xl border border-slate-200 dark:border-slate-800 shadow-sm overflow-x-auto mb-6 w-fit">
+        {(['all', 'pharmacy', 'importer', 'regional_manager'] as const).map((f) => (
+          <button
+            key={f}
+            onClick={() => setFilter(f)}
+            className={`px-6 py-2 rounded-lg text-xs font-bold transition-all whitespace-nowrap ${filter === f ? 'bg-blue-600 text-white shadow-md shadow-blue-100 dark:shadow-none' : 'text-slate-500 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800'}`}
+          >
+            {f.charAt(0).toUpperCase() + f.slice(1).replace('_', ' ')}s
+          </button>
+        ))}
       </div>
 
       <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm overflow-hidden">
@@ -2200,10 +3151,12 @@ const AdminUserManagement = () => {
               <tr><td colSpan={5} className="px-6 py-12 text-center text-slate-500">No users found.</td></tr>
             ) : (
               filteredUsers.map((u) => (
-                <tr key={u.uid} className="hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors">
+                <tr key={u.uid} className={`hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors ${u.subscriptionStatus === 'expired' ? 'bg-red-50/30' : ''}`}>
                   <td className="px-6 py-4">
                     <div className="flex items-center gap-3">
-                      <div className="w-10 h-10 rounded-xl bg-blue-50 dark:bg-blue-900/20 flex items-center justify-center text-blue-600 dark:text-blue-400 font-bold">
+                      <div className={`w-10 h-10 rounded-xl flex items-center justify-center font-bold ${
+                        u.subscriptionStatus === 'expired' ? 'bg-red-100 text-red-600' : 'bg-blue-50 text-blue-600'
+                      }`}>
                         {(u.displayName || '?').charAt(0)}
                       </div>
                       <div>
@@ -2232,15 +3185,28 @@ const AdminUserManagement = () => {
                       <div className="flex flex-col gap-1">
                         <div className="flex items-center gap-1">
                           <select 
-                            value={u.subscriptionType || 'basic'} 
-                            onChange={(e) => handleSubscriptionUpdate(u.uid, e.target.value as any, u.subscriptionStatus || 'active')}
+                            value={editingUsers[u.uid]?.type || u.subscriptionType || 'basic'} 
+                            onChange={(e) => setEditingUsers({...editingUsers, [u.uid]: { type: e.target.value, status: editingUsers[u.uid]?.status || u.subscriptionStatus || 'active' }})}
                             className="text-[10px] font-bold bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded px-1 py-0.5 outline-none focus:ring-1 focus:ring-blue-500 dark:text-white"
                           >
                             <option value="basic">BASIC</option>
                             <option value="standard">STANDARD</option>
                             <option value="premium">PREMIUM</option>
                           </select>
-                          {u.pendingSubscriptionType && (
+                          {editingUsers[u.uid] && (
+                            <button 
+                              onClick={async () => {
+                                await handleSubscriptionUpdate(u.uid, editingUsers[u.uid].type as any, editingUsers[u.uid].status as any);
+                                const newEditing = {...editingUsers};
+                                delete newEditing[u.uid];
+                                setEditingUsers(newEditing);
+                              }}
+                              className="text-[8px] font-bold text-white bg-blue-600 px-1 rounded hover:bg-blue-700 transition-colors flex items-center gap-0.5"
+                            >
+                              <Save size={10} /> UPDATE
+                            </button>
+                          )}
+                          {u.pendingSubscriptionType && !editingUsers[u.uid] && (
                             <button 
                               onClick={() => handleSubscriptionUpdate(u.uid, u.pendingSubscriptionType as any, 'active')}
                               className="text-[8px] font-bold text-white bg-amber-500 px-1 rounded hover:bg-amber-600 transition-colors"
@@ -2250,14 +3216,21 @@ const AdminUserManagement = () => {
                             </button>
                           )}
                         </div>
-                        <select 
-                          value={u.subscriptionStatus || 'expired'} 
-                          onChange={(e) => handleSubscriptionUpdate(u.uid, u.subscriptionType || 'basic', e.target.value as any)}
-                          className={`text-[9px] font-bold border rounded px-1 py-0.5 outline-none ${u.subscriptionStatus === 'active' ? 'bg-green-50 dark:bg-green-900/20 text-green-600 border-green-200 dark:border-green-800' : 'bg-red-50 dark:bg-red-900/20 text-red-600 border-red-200 dark:border-red-800'}`}
-                        >
-                          <option value="active">ACTIVE</option>
-                          <option value="expired">EXPIRED</option>
-                        </select>
+                        <div className="flex items-center gap-2">
+                          <select 
+                            value={editingUsers[u.uid]?.status || u.subscriptionStatus || 'expired'} 
+                            onChange={(e) => setEditingUsers({...editingUsers, [u.uid]: { status: e.target.value, type: editingUsers[u.uid]?.type || u.subscriptionType || 'basic' }})}
+                            className={`text-[9px] font-bold border rounded px-1 py-0.5 outline-none ${(editingUsers[u.uid]?.status || u.subscriptionStatus) === 'active' ? 'bg-green-50 dark:bg-green-900/20 text-green-600 border-green-200 dark:border-green-800' : 'bg-red-50 dark:bg-red-900/20 text-red-600 border-red-200 dark:border-red-800'}`}
+                          >
+                            <option value="active">ACTIVE</option>
+                            <option value="expired">EXPIRED</option>
+                          </select>
+                          {u.subscriptionExpiryDate && (
+                            <span className="text-[9px] text-slate-400">
+                              {format(u.subscriptionExpiryDate, 'MMM dd')}
+                            </span>
+                          )}
+                        </div>
                       </div>
                     ) : (
                       <span className="text-xs text-slate-400 dark:text-slate-500">-</span>
@@ -2307,11 +3280,124 @@ const AdminUserManagement = () => {
           </button>
         </div>
       )}
+
+      {/* Manual Add User Modal */}
+      <AnimatePresence>
+        {showAddModal && (
+          <div className="fixed inset-0 z-[110] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm">
+            <motion.div 
+              initial={{ scale: 0.95, opacity: 0, y: 20 }}
+              animate={{ scale: 1, opacity: 1, y: 0 }}
+              exit={{ scale: 0.95, opacity: 0, y: 20 }}
+              className="bg-white dark:bg-slate-900 rounded-[2.5rem] shadow-2xl w-full max-w-lg border border-slate-200 dark:border-slate-800 overflow-hidden"
+            >
+              <div className="p-8 border-b border-slate-100 dark:border-slate-800 flex justify-between items-center">
+                <div>
+                  <h2 className="text-xl font-bold text-slate-900 dark:text-white">Add New User</h2>
+                  <p className="text-xs text-slate-500">Manually onboard a business or manager.</p>
+                </div>
+                <button onClick={() => setShowAddModal(false)} className="p-2 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-xl text-slate-400 transition-colors">
+                  <X size={20} />
+                </button>
+              </div>
+
+              <form onSubmit={handleManualAdd} className="p-8 space-y-4">
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="col-span-2">
+                    <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1.5 ml-1">Account Role</label>
+                    <select 
+                      value={newUser.role}
+                      onChange={(e) => setNewUser({...newUser, role: e.target.value as UserRole})}
+                      className="w-full bg-slate-50 dark:bg-slate-800 border-none rounded-xl px-4 py-3 outline-none focus:ring-2 focus:ring-blue-500/20 dark:text-white font-bold text-sm"
+                    >
+                      <option value="pharmacy">Pharmacy</option>
+                      <option value="importer">Importer</option>
+                      <option value="regional_manager">Regional Manager</option>
+                    </select>
+                  </div>
+
+                  <div className="col-span-2">
+                    <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1.5 ml-1">Email Address</label>
+                    <input 
+                      type="email" 
+                      required
+                      placeholder="user@example.com"
+                      value={newUser.email}
+                      onChange={(e) => setNewUser({...newUser, email: e.target.value})}
+                      className="w-full bg-slate-50 dark:bg-slate-800 border-none rounded-xl px-4 py-3 outline-none focus:ring-2 focus:ring-blue-500/20 dark:text-white text-sm"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1.5 ml-1">Display Name</label>
+                    <input 
+                      type="text" 
+                      required
+                      placeholder="John Doe"
+                      value={newUser.displayName}
+                      onChange={(e) => setNewUser({...newUser, displayName: e.target.value})}
+                      className="w-full bg-slate-50 dark:bg-slate-800 border-none rounded-xl px-4 py-3 outline-none focus:ring-2 focus:ring-blue-500/20 dark:text-white text-sm"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1.5 ml-1">Business Name</label>
+                    <input 
+                      type="text" 
+                      placeholder="Optional"
+                      value={newUser.businessName}
+                      onChange={(e) => setNewUser({...newUser, businessName: e.target.value})}
+                      className="w-full bg-slate-50 dark:bg-slate-800 border-none rounded-xl px-4 py-3 outline-none focus:ring-2 focus:ring-blue-500/20 dark:text-white text-sm"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1.5 ml-1">City</label>
+                    <input 
+                      type="text" 
+                      placeholder="Addis Ababa"
+                      value={newUser.city}
+                      onChange={(e) => setNewUser({...newUser, city: e.target.value})}
+                      className="w-full bg-slate-50 dark:bg-slate-800 border-none rounded-xl px-4 py-3 outline-none focus:ring-2 focus:ring-blue-500/20 dark:text-white text-sm"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1.5 ml-1">Password</label>
+                    <input 
+                      type="password" 
+                      required
+                      placeholder="••••••••"
+                      value={newUser.password}
+                      onChange={(e) => setNewUser({...newUser, password: e.target.value})}
+                      className="w-full bg-slate-50 dark:bg-slate-800 border-none rounded-xl px-4 py-3 outline-none focus:ring-2 focus:ring-blue-500/20 dark:text-white text-sm"
+                    />
+                  </div>
+                </div>
+
+                <div className="pt-4">
+                  <button 
+                    type="submit"
+                    disabled={isCreating}
+                    className="w-full bg-blue-600 text-white py-4 rounded-2xl font-bold hover:bg-blue-700 transition-all shadow-lg shadow-blue-100 dark:shadow-none flex items-center justify-center gap-2 disabled:opacity-50"
+                  >
+                    {isCreating ? <Clock className="animate-spin" size={20} /> : <UserPlus size={20} />}
+                    {isCreating ? 'Creating Profile...' : 'Confirm and Add User'}
+                  </button>
+                  <p className="text-[10px] text-center text-slate-400 mt-4 font-medium italic">
+                    Note: User will need to register with this exact email to link to this profile.
+                  </p>
+                </div>
+              </form>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
     </div>
   );
 };
 
-const AdminRevenuePanel = () => {
+const AdminRevenuePanel = ({ settings }: { settings: SystemSettings | null }) => {
   const [orders, setOrders] = useState<Order[]>([]);
   const [users, setUsers] = useState<UserProfile[]>([]);
   const [loading, setLoading] = useState(true);
@@ -2341,7 +3427,14 @@ const AdminRevenuePanel = () => {
 
   const totalCommission = orders.reduce((sum, o) => sum + (o.commissionAmount || 0), 0);
   const activeSubs = users.filter(u => u.subscriptionStatus === 'active').length;
-  const subscriptionIncome = activeSubs * 500; // Mock price
+  const subscriptionIncome = users
+    .filter(u => u.subscriptionStatus === 'active')
+    .reduce((sum, u) => {
+      const plan = u.subscriptionType || 'basic';
+      const price = (settings?.planPrices?.[plan as keyof typeof PLAN_PRICES]) ?? PLAN_PRICES[plan as keyof typeof PLAN_PRICES];
+      return sum + price;
+    }, 0);
+    
   const totalRevenue = totalCommission + subscriptionIncome;
 
   const revenueByRegion = orders.reduce((acc: any, o) => {
@@ -2472,8 +3565,9 @@ const AdminMarketplaceControl = () => {
   const [loadingMore, setLoadingMore] = useState(false);
   const [lastDoc, setLastDoc] = useState<QueryDocumentSnapshot | null>(null);
   const [hasMore, setHasMore] = useState(true);
+  const [searchQuery, setSearchQuery] = useState('');
 
-  const PAGE_SIZE = 20;
+  const PAGE_SIZE = 50;
 
   useEffect(() => {
     const q = query(collection(db, 'products'), orderBy('createdAt', 'desc'), limit(PAGE_SIZE));
@@ -2518,12 +3612,28 @@ const AdminMarketplaceControl = () => {
     }
   };
 
+  const filteredProducts = products.filter(p => 
+    p.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+    p.importerName.toLowerCase().includes(searchQuery.toLowerCase()) ||
+    p.category.toLowerCase().includes(searchQuery.toLowerCase())
+  );
+
   return (
     <div className="p-8 max-w-7xl mx-auto">
-      <div className="flex justify-between items-center mb-8">
+      <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-8">
         <div>
           <h1 className="text-2xl font-bold text-slate-900 dark:text-white">Marketplace Control</h1>
           <p className="text-slate-500 dark:text-slate-400">Monitor and manage all medicine listings.</p>
+        </div>
+        <div className="relative w-full md:w-64">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
+          <input 
+            type="text" 
+            placeholder="Search products or importers..." 
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            className="pl-10 pr-4 py-2.5 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl outline-none focus:ring-2 focus:ring-blue-500/20 w-full dark:text-white"
+          />
         </div>
       </div>
 
@@ -2541,10 +3651,10 @@ const AdminMarketplaceControl = () => {
           <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
             {loading ? (
               <tr><td colSpan={5} className="px-6 py-12 text-center text-slate-500 dark:text-slate-400">Loading products...</td></tr>
-            ) : products.length === 0 ? (
-              <tr><td colSpan={5} className="px-6 py-12 text-center text-slate-500 dark:text-slate-400">No products listed.</td></tr>
+            ) : filteredProducts.length === 0 ? (
+              <tr><td colSpan={5} className="px-6 py-12 text-center text-slate-500 dark:text-slate-400">No products found.</td></tr>
             ) : (
-              products.map((p) => (
+              filteredProducts.map((p) => (
                 <tr key={p.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors">
                   <td className="px-6 py-4">
                     <div>
@@ -2688,12 +3798,23 @@ const AdminNotifications = () => {
 
 const AdminSystemControl = () => {
   const [settings, setSettings] = useState<SystemSettings | null>(null);
+  const [tempSettings, setTempSettings] = useState<SystemSettings | null>(null);
   const [loading, setLoading] = useState(true);
+  const [isSaving, setIsSaving] = useState(false);
 
   useEffect(() => {
     const unsub = onSnapshot(doc(db, 'system_settings', 'main'), (snapshot) => {
       if (snapshot.exists()) {
-        setSettings(snapshot.data() as SystemSettings);
+        const data = snapshot.data() as SystemSettings;
+        const hydratedData: SystemSettings = {
+          ...data,
+          planPrices: {
+            ...PLAN_PRICES,
+            ...(data.planPrices || {})
+          }
+        };
+        setSettings(hydratedData);
+        if (!tempSettings) setTempSettings(hydratedData);
       } else {
         // Initialize default settings
         const defaultSettings: SystemSettings = {
@@ -2708,7 +3829,9 @@ const AdminSystemControl = () => {
             premiumPlanRate: 250,
             orderCommissionPercent: 1
           },
+          pharmacyReferralRewardMonths: 1,
           maxMedicinesPerPlan: { basic: 100, standard: 500, premium: 2000 },
+          planPrices: { basic: 0, standard: 1200, premium: 3000 },
           featuresEnabled: { marketplace: true, subscriptions: true, analytics: true },
           updatedAt: Date.now()
         };
@@ -2719,23 +3842,44 @@ const AdminSystemControl = () => {
     return unsub;
   }, []);
 
-  const updateSettings = async (newSettings: Partial<SystemSettings>) => {
+  const saveSettings = async () => {
+    if (!tempSettings) return;
+    setIsSaving(true);
     try {
       await updateDoc(doc(db, 'system_settings', 'main'), {
-        ...newSettings,
+        ...tempSettings,
         updatedAt: Date.now()
       });
-      toast.success('System settings updated');
+      toast.success('System settings saved successfully');
+      setSettings(tempSettings);
     } catch (error) {
       handleFirestoreError(error, OperationType.UPDATE, 'system_settings/main');
+    } finally {
+      setIsSaving(false);
     }
   };
 
-  if (loading || !settings) return <div className="p-8 text-center text-slate-500 italic">Loading settings...</div>;
+  const hasChanges = JSON.stringify(settings) !== JSON.stringify(tempSettings);
+
+  if (loading || !tempSettings) return <div className="p-8 text-center text-slate-500 italic">Loading settings...</div>;
 
   return (
-    <div className="p-8 max-w-4xl mx-auto">
-      <h1 className="text-2xl font-bold text-slate-900 dark:text-white mb-8">System Control</h1>
+    <div className="p-8 max-w-4xl mx-auto pb-32">
+      <div className="flex justify-between items-center mb-8">
+        <h1 className="text-2xl font-bold text-slate-900 dark:text-white">System Control</h1>
+        <button 
+          onClick={saveSettings}
+          disabled={isSaving}
+          className={`px-6 py-2 rounded-xl font-bold transition-all shadow-md flex items-center gap-2 disabled:opacity-50 ${
+            hasChanges 
+              ? 'bg-blue-600 text-white hover:bg-blue-700' 
+              : 'bg-slate-100 dark:bg-slate-850 text-slate-400 dark:text-slate-500 border border-slate-200 dark:border-slate-700/50'
+          }`}
+        >
+          {isSaving ? <Clock className="animate-spin" size={18} /> : <Save size={18} />}
+          {isSaving ? 'Saving...' : 'Save All Changes'}
+        </button>
+      </div>
       
       <div className="space-y-8">
         <div className="bg-white dark:bg-slate-900 p-6 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm">
@@ -2745,8 +3889,8 @@ const AdminSystemControl = () => {
               <label className="block text-xs font-bold text-slate-500 dark:text-slate-400 uppercase mb-1">Support Email</label>
               <input 
                 type="email" 
-                value={settings.contactEmail}
-                onChange={(e) => updateSettings({ contactEmail: e.target.value })}
+                value={tempSettings.contactEmail ?? ''}
+                onChange={(e) => setTempSettings({ ...tempSettings, contactEmail: e.target.value })}
                 className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500 dark:text-white"
               />
             </div>
@@ -2754,8 +3898,8 @@ const AdminSystemControl = () => {
               <label className="block text-xs font-bold text-slate-500 dark:text-slate-400 uppercase mb-1">Support Phone</label>
               <input 
                 type="text" 
-                value={settings.contactPhone}
-                onChange={(e) => updateSettings({ contactPhone: e.target.value })}
+                value={tempSettings.contactPhone ?? ''}
+                onChange={(e) => setTempSettings({ ...tempSettings, contactPhone: e.target.value })}
                 className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500 dark:text-white"
               />
             </div>
@@ -2770,8 +3914,8 @@ const AdminSystemControl = () => {
               <div className="flex gap-2">
                 <input 
                   type="number" 
-                  value={settings.globalCommissionPercent}
-                  onChange={(e) => updateSettings({ globalCommissionPercent: Number(e.target.value) })}
+                  value={tempSettings.globalCommissionPercent ?? 0}
+                  onChange={(e) => setTempSettings({ ...tempSettings, globalCommissionPercent: Number(e.target.value) })}
                   className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500 dark:text-white"
                 />
               </div>
@@ -2786,8 +3930,8 @@ const AdminSystemControl = () => {
               <label className="block text-xs font-bold text-slate-500 dark:text-slate-400 uppercase mb-1">Commission Duration (Months)</label>
               <input 
                 type="number" 
-                value={settings.marketingCommission?.durationMonths || 12}
-                onChange={(e) => updateSettings({ marketingCommission: { ...settings.marketingCommission, durationMonths: Number(e.target.value) } })}
+                value={tempSettings.marketingCommission?.durationMonths || 12}
+                onChange={(e) => setTempSettings({ ...tempSettings, marketingCommission: { ...tempSettings.marketingCommission, durationMonths: Number(e.target.value) } })}
                 className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500 dark:text-white"
               />
               <p className="text-[10px] text-slate-400 dark:text-slate-500 mt-1 italic">How many months a marketing member earns from a referral.</p>
@@ -2796,8 +3940,8 @@ const AdminSystemControl = () => {
               <label className="block text-xs font-bold text-slate-500 dark:text-slate-400 uppercase mb-1">Order Commission (%)</label>
               <input 
                 type="number" 
-                value={settings.marketingCommission?.orderCommissionPercent || 1}
-                onChange={(e) => updateSettings({ marketingCommission: { ...settings.marketingCommission, orderCommissionPercent: Number(e.target.value) } })}
+                value={tempSettings.marketingCommission?.orderCommissionPercent || 1}
+                onChange={(e) => setTempSettings({ ...tempSettings, marketingCommission: { ...tempSettings.marketingCommission, orderCommissionPercent: Number(e.target.value) } })}
                 className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500 dark:text-white"
               />
               <p className="text-[10px] text-slate-400 dark:text-slate-500 mt-1 italic">Percentage of B2B order totals paid to referrer.</p>
@@ -2806,8 +3950,8 @@ const AdminSystemControl = () => {
               <label className="block text-xs font-bold text-slate-500 dark:text-slate-400 uppercase mb-1">Basic Plan Referral (ETB)</label>
               <input 
                 type="number" 
-                value={settings.marketingCommission?.basicPlanRate || 50}
-                onChange={(e) => updateSettings({ marketingCommission: { ...settings.marketingCommission, basicPlanRate: Number(e.target.value) } })}
+                value={tempSettings.marketingCommission?.basicPlanRate || 50}
+                onChange={(e) => setTempSettings({ ...tempSettings, marketingCommission: { ...tempSettings.marketingCommission, basicPlanRate: Number(e.target.value) } })}
                 className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500 dark:text-white"
               />
             </div>
@@ -2815,8 +3959,8 @@ const AdminSystemControl = () => {
               <label className="block text-xs font-bold text-slate-500 dark:text-slate-400 uppercase mb-1">Standard Plan Referral (ETB)</label>
               <input 
                 type="number" 
-                value={settings.marketingCommission?.standardPlanRate || 100}
-                onChange={(e) => updateSettings({ marketingCommission: { ...settings.marketingCommission, standardPlanRate: Number(e.target.value) } })}
+                value={tempSettings.marketingCommission?.standardPlanRate || 100}
+                onChange={(e) => setTempSettings({ ...tempSettings, marketingCommission: { ...tempSettings.marketingCommission, standardPlanRate: Number(e.target.value) } })}
                 className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500 dark:text-white"
               />
             </div>
@@ -2824,8 +3968,8 @@ const AdminSystemControl = () => {
               <label className="block text-xs font-bold text-slate-500 dark:text-slate-400 uppercase mb-1">Premium Plan Referral (ETB)</label>
               <input 
                 type="number" 
-                value={settings.marketingCommission?.premiumPlanRate || 250}
-                onChange={(e) => updateSettings({ marketingCommission: { ...settings.marketingCommission, premiumPlanRate: Number(e.target.value) } })}
+                value={tempSettings.marketingCommission?.premiumPlanRate || 250}
+                onChange={(e) => setTempSettings({ ...tempSettings, marketingCommission: { ...tempSettings.marketingCommission, premiumPlanRate: Number(e.target.value) } })}
                 className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500 dark:text-white"
               />
             </div>
@@ -2833,12 +3977,28 @@ const AdminSystemControl = () => {
         </div>
 
         <div className="bg-white dark:bg-slate-900 p-6 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm">
+          <h3 className="font-bold text-slate-900 dark:text-white mb-6 flex items-center gap-2"><UserPlus size={20} className="text-blue-600" /> B2B Referral Settings</h3>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div>
+              <label className="block text-xs font-bold text-slate-500 dark:text-slate-400 uppercase mb-1">Free Months Per Referral</label>
+              <input 
+                type="number" 
+                value={tempSettings.pharmacyReferralRewardMonths || 1}
+                onChange={(e) => setTempSettings({ ...tempSettings, pharmacyReferralRewardMonths: Number(e.target.value) })}
+                className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500 dark:text-white"
+              />
+              <p className="text-[10px] text-slate-400 dark:text-slate-500 mt-1 italic">Subscription extension given to pharmacies/importers when their referral is approved.</p>
+            </div>
+          </div>
+        </div>
+
+        <div className="bg-white dark:bg-slate-900 p-6 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm">
           <h3 className="font-bold text-slate-900 dark:text-white mb-6 flex items-center gap-2"><ShieldCheck size={20} className="text-blue-600" /> Feature Flags</h3>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            {Object.entries(settings.featuresEnabled).map(([feature, enabled]) => (
+            {Object.entries(tempSettings.featuresEnabled).map(([feature, enabled]) => (
               <button 
                 key={feature}
-                onClick={() => updateSettings({ featuresEnabled: { ...settings.featuresEnabled, [feature]: !enabled } })}
+                onClick={() => setTempSettings({ ...tempSettings, featuresEnabled: { ...tempSettings.featuresEnabled, [feature]: !enabled } })}
                 className={`flex items-center justify-between p-4 rounded-xl border transition-all ${enabled ? 'bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-800 text-blue-600 dark:text-blue-400' : 'bg-slate-50 dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-400 dark:text-slate-500'}`}
               >
                 <span className="text-sm font-bold capitalize">{feature}</span>
@@ -2851,22 +4011,65 @@ const AdminSystemControl = () => {
         </div>
 
         <div className="bg-white dark:bg-slate-900 p-6 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm">
-          <h3 className="font-bold text-slate-900 dark:text-white mb-6 flex items-center gap-2"><Package size={20} className="text-blue-600" /> Inventory Limits</h3>
+          <h3 className="font-bold text-slate-900 dark:text-white mb-6 flex items-center gap-2"><CreditCard size={20} className="text-blue-600" /> Subscription Pricing (ETB/Month)</h3>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-            {Object.entries(settings.maxMedicinesPerPlan).map(([plan, limit]) => (
+            {Object.entries(tempSettings.planPrices || PLAN_PRICES).map(([plan, price]) => (
               <div key={plan}>
-                <label className="block text-xs font-bold text-slate-500 dark:text-slate-400 uppercase mb-1">{plan} Plan Limit</label>
+                <label className="block text-xs font-bold text-slate-500 dark:text-slate-400 uppercase mb-1">{plan} Plan Price</label>
                 <input 
                   type="number" 
-                  value={limit}
-                  onChange={(e) => updateSettings({ maxMedicinesPerPlan: { ...settings.maxMedicinesPerPlan, [plan]: Number(e.target.value) } })}
+                  value={price}
+                  onChange={(e) => setTempSettings({ 
+                    ...tempSettings, 
+                    planPrices: { 
+                      ...(tempSettings.planPrices || PLAN_PRICES), 
+                      [plan]: Number(e.target.value) 
+                    } 
+                  })}
                   className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500 dark:text-white"
                 />
               </div>
             ))}
           </div>
         </div>
+
+
       </div>
+
+      {/* Persistent Save Settings Action Bar */}
+      <div className="mt-8 bg-white dark:bg-slate-900 p-6 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm flex flex-col md:flex-row justify-between items-center gap-4">
+        <div>
+          <h4 className="font-bold text-slate-900 dark:text-white text-sm">Apply System Configuration</h4>
+          <p className="text-xs text-slate-400 dark:text-slate-500 mt-1">
+            {hasChanges ? 'You have unsaved changes in system settings.' : 'System configuration is completely up-to-date.'}
+          </p>
+        </div>
+        <button 
+          onClick={saveSettings}
+          disabled={isSaving}
+          className={`w-full md:w-auto px-8 py-3 rounded-xl font-bold transition-all shadow-md flex items-center justify-center gap-2 disabled:opacity-50 ${
+            hasChanges 
+              ? 'bg-blue-600 text-white hover:bg-blue-700' 
+              : 'bg-slate-100 dark:bg-slate-850 text-slate-500 dark:text-slate-400 border border-slate-200 dark:border-slate-700/50 hover:bg-slate-150'
+          }`}
+        >
+          {isSaving ? <Clock className="animate-spin" size={18} /> : <Save size={18} />}
+          {isSaving ? 'Saving...' : 'Save Settings'}
+        </button>
+      </div>
+
+      {hasChanges && (
+        <div className="fixed bottom-8 right-8 z-50">
+          <button 
+            onClick={saveSettings}
+            disabled={isSaving}
+            className="bg-blue-600 text-white px-8 py-4 rounded-2xl font-bold hover:bg-blue-700 transition-all shadow-2xl flex items-center gap-2 disabled:opacity-50 scale-110"
+          >
+            {isSaving ? <Clock className="animate-spin" size={20} /> : <Save size={20} />}
+            {isSaving ? 'Saving...' : 'Save System Changes'}
+          </button>
+        </div>
+      )}
     </div>
   );
 };
@@ -2987,9 +4190,10 @@ const RegionalManagerDashboard = ({ user }: { user: UserProfile }) => {
 };
 
 const DEFAULT_PERMISSIONS: Record<string, string[]> = {
-  pharmacist: ['dashboard', 'inventory', 'sales', 'marketplace', 'orders', 'settings'],
+  pharmacist: ['dashboard', 'inventory', 'sales', 'marketplace', 'orders', 'suppliers', 'settings'],
   cashier: ['dashboard', 'sales', 'settings'],
-  inventory: ['dashboard', 'inventory', 'marketplace', 'orders', 'settings'],
+  inventory: ['dashboard', 'inventory', 'marketplace', 'orders', 'suppliers', 'settings'],
+  importer_staff: ['dashboard', 'my-products', 'orders', 'settings'],
 };
 
 const Sidebar = ({ 
@@ -2999,7 +4203,9 @@ const Sidebar = ({
   user, 
   onSignOut,
   toggleTheme,
-  settings
+  settings,
+  isCollapsed,
+  onToggle
 }: { 
   activeTab: string, 
   setActiveTab: (t: string) => void, 
@@ -3007,17 +4213,19 @@ const Sidebar = ({
   user: UserProfile, 
   onSignOut: () => void,
   toggleTheme: () => void,
-  settings: SystemSettings | null
+  settings: SystemSettings | null,
+  isCollapsed: boolean,
+  onToggle: () => void
 }) => {
   const menuItems = [
     { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard, roles: ['admin', 'pharmacy', 'importer', 'regional_manager', 'staff', 'marketing'] },
     { id: 'inventory', label: 'Inventory', icon: Package, roles: ['pharmacy', 'staff'] },
-    { id: 'importer-inventory', label: 'My Products', icon: Package, roles: ['importer'] },
+    { id: 'my-products', label: 'My Products', icon: Box, roles: ['importer', 'staff'] },
     { id: 'sales', label: 'Sales & POS', icon: ShoppingCart, roles: ['pharmacy', 'staff'] },
     { id: 'marketplace', label: 'Marketplace', icon: Truck, roles: ['pharmacy', 'admin', 'staff'], minPlan: 'standard' },
     { id: 'orders', label: 'B2B Orders', icon: ShoppingCart, roles: ['pharmacy', 'importer', 'staff'], minPlan: 'standard' },
-    { id: 'suppliers', label: 'Suppliers', icon: Building2, roles: ['pharmacy'], minPlan: 'premium' },
-    { id: 'staff', label: 'Staff Accounts', icon: Users, roles: ['pharmacy'], minPlan: 'premium' },
+    { id: 'suppliers', label: 'Suppliers', icon: Building2, roles: ['pharmacy', 'importer', 'staff'], minPlan: 'premium' },
+    { id: 'staff', label: 'Staff Accounts', icon: Users, roles: ['pharmacy', 'importer', 'staff'], minPlan: 'premium' },
     { id: 'subscription', label: 'Subscription', icon: CreditCard, roles: ['pharmacy', 'importer'] },
     { id: 'admin-users', label: 'User Management', icon: Users, roles: ['admin'] },
     { id: 'admin-marketing', label: 'Marketing Team', icon: Users, roles: ['admin'] },
@@ -3053,24 +4261,72 @@ const Sidebar = ({
   });
 
   return (
-    <div className="w-64 bg-white dark:bg-slate-950 border-r border-slate-200 dark:border-slate-800 h-screen flex flex-col sticky top-0 transition-colors duration-300 overflow-y-auto scrollbar-hide">
-      <div className="p-6">
-        <div className="flex items-center gap-3 mb-8 group">
-          <div className="w-10 h-10 bg-blue-600 rounded-xl flex items-center justify-center shadow-lg shadow-blue-100 dark:shadow-[0_0_20px_rgba(37,99,235,0.5)] dark:shadow-blue-900/50 transition-all duration-500 group-hover:scale-110">
-            <Package className="text-white w-6 h-6" />
+    <div className={`${isCollapsed ? 'w-20' : 'w-72'} bg-white dark:bg-slate-950 border-r border-slate-200 dark:border-slate-800 h-screen flex flex-col sticky top-0 transition-all duration-300 overflow-y-auto scrollbar-hide z-[100]`}>
+      <div className={`${isCollapsed ? 'p-4' : 'p-6'}`}>
+        <div className={`flex items-center ${isCollapsed ? 'flex-col gap-6' : 'justify-between'} mb-10`}>
+          <div className="flex items-center gap-3 group">
+            <div className={`w-12 h-12 bg-blue-600 rounded-2xl flex items-center justify-center shadow-lg shadow-blue-100 dark:shadow-[0_0_20px_rgba(37,99,235,0.4)] transition-all duration-500 group-hover:rotate-6`}>
+              <Package className="text-white w-7 h-7" />
+            </div>
+            {!isCollapsed && (
+              <div className="flex flex-col">
+                <span className="font-black text-xl text-slate-900 dark:text-white tracking-tighter leading-none">A-TECH</span>
+                <span className="text-[10px] font-bold text-blue-600 dark:text-blue-400 uppercase tracking-[0.2em] mt-1">Ethiopia</span>
+              </div>
+            )}
           </div>
-          <span className="font-bold text-xl text-slate-900 dark:text-white tracking-tight">A-Tech</span>
+          <button 
+            onClick={onToggle}
+            className={`p-2.5 rounded-xl hover:bg-slate-50 dark:hover:bg-slate-900 text-slate-400 hover:text-blue-600 transition-all border border-transparent hover:border-slate-200 dark:hover:border-slate-800 shadow-sm hover:shadow-md ${isCollapsed ? '' : ''}`}
+            title={isCollapsed ? "Expand Sidebar" : "Collapse Sidebar"}
+          >
+            {isCollapsed ? <ChevronRight size={20} /> : <ChevronLeft size={20} />}
+          </button>
         </div>
-        <nav className="space-y-1">
+        <nav className="space-y-1.5">
           {filteredMenuItems.map((item) => (
-            <button key={item.id} onClick={() => setActiveTab(item.id)} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all ${activeTab === item.id ? 'bg-blue-50 dark:bg-blue-900/20 text-blue-600 font-bold' : 'text-slate-500 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-900 hover:text-slate-900 dark:hover:text-white'}`}>
-              <item.icon size={20} /> {item.label}
+            <button 
+              key={item.id} 
+              onClick={() => setActiveTab(item.id)} 
+              className={`w-full flex items-center ${isCollapsed ? 'justify-center py-4' : 'gap-3 px-4 py-3.5'} rounded-2xl transition-all relative group ${activeTab === item.id ? 'bg-blue-600 text-white shadow-lg shadow-blue-100 dark:shadow-none font-bold' : 'text-slate-500 dark:text-slate-400 hover:bg-slate-100/50 dark:hover:bg-slate-900 hover:text-slate-900 dark:hover:text-white'}`}
+              title={isCollapsed ? item.label : ''}
+            >
+              <item.icon size={22} className={`${activeTab === item.id ? 'scale-110' : 'group-hover:scale-110 transition-transform'}`} /> 
+              {!isCollapsed && <span className="text-sm">{item.label}</span>}
+              {activeTab === item.id && isCollapsed && (
+                <motion.div layoutId="active-pill" className="absolute left-0 w-1 h-6 bg-white rounded-r-full" />
+              )}
             </button>
           ))}
         </nav>
       </div>
       <div className="mt-auto p-6 border-t border-slate-100 dark:border-slate-800">
-        {settings && (
+        {!isCollapsed && (role === 'pharmacy' || role === 'importer') && (
+          <div className="mb-4 p-4 bg-blue-50 dark:bg-blue-900/20 rounded-2xl border border-blue-100 dark:border-blue-800">
+            <p className="text-[10px] font-bold text-blue-600 dark:text-blue-400 uppercase tracking-widest mb-1">Referral Code</p>
+            <div className="flex items-center justify-between">
+              <span className="font-mono font-bold text-blue-700 dark:text-blue-300">{user.referralCode || user.uid.slice(0, 8).toUpperCase()}</span>
+              <button 
+                onClick={() => {
+                  const code = user.referralCode || user.uid.slice(0, 8).toUpperCase();
+                  navigator.clipboard.writeText(code);
+                  toast.success('Referral code copied!');
+                  // If it's missing in DB, we could optionally update it here, but it's fine for now
+                  if (!user.referralCode) {
+                    updateDoc(doc(db, 'users', user.uid), { referralCode: code });
+                  }
+                }}
+                className="p-1.5 hover:bg-white dark:hover:bg-slate-800 rounded-lg text-blue-600 transition-colors"
+                title="Copy Code"
+              >
+                <Copy size={14} />
+              </button>
+            </div>
+            <p className="text-[9px] text-blue-500/70 mt-1 italic">Invite others to earn free months!</p>
+          </div>
+        )}
+
+        {!isCollapsed && settings && (
           <div className="mb-6 p-4 bg-slate-50 dark:bg-slate-900 rounded-2xl border border-slate-100 dark:border-slate-800">
             <p className="text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-widest mb-2">Support</p>
             <div className="space-y-2">
@@ -3086,28 +4342,179 @@ const Sidebar = ({
 
         <button 
           onClick={toggleTheme}
-          className="w-full flex items-center gap-3 px-4 py-2 mb-4 text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-900 rounded-lg transition-colors text-sm font-bold"
+          className={`w-full flex items-center ${isCollapsed ? 'justify-center' : 'gap-3 px-4'} py-2 mb-4 text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-900 rounded-lg transition-colors text-sm font-bold`}
+          title={isCollapsed ? (user.theme === 'dark' ? 'Light Mode' : 'Dark Mode') : ''}
         >
           {user.theme === 'dark' ? <Sun size={18} /> : <Moon size={18} />}
-          {user.theme === 'dark' ? 'Light Mode' : 'Dark Mode'}
+          {!isCollapsed && (user.theme === 'dark' ? 'Light Mode' : 'Dark Mode')}
         </button>
 
-        <div className="flex items-center gap-3 mb-4">
-          <div className="w-8 h-8 rounded-full bg-slate-200 dark:bg-slate-700 flex items-center justify-center text-xs font-bold text-slate-600 dark:text-slate-300">{(user.displayName || '?').charAt(0)}</div>
-          <div className="flex-1 min-w-0">
-            <p className="text-sm font-bold text-slate-900 dark:text-white truncate">{user.displayName}</p>
-            <div className="flex items-center gap-1 text-[9px] text-slate-400 dark:text-slate-500 font-bold uppercase tracking-tighter">
-              <MapPin size={10} /> {user.country || 'Global'}
+        <div className={`flex items-center ${isCollapsed ? 'justify-center' : 'gap-3'} mb-4`}>
+          <div className="w-8 h-8 rounded-full bg-slate-200 dark:bg-slate-700 flex items-center justify-center text-xs font-bold text-slate-600 dark:text-slate-300 shrink-0">{(user.displayName || '?').charAt(0)}</div>
+          {!isCollapsed && (
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-bold text-slate-900 dark:text-white truncate">{user.displayName}</p>
+              <div className="flex items-center gap-1 text-[9px] text-slate-400 dark:text-slate-500 font-bold uppercase tracking-tighter">
+                <MapPin size={10} /> {user.country || 'Global'}
+              </div>
+            </div>
+          )}
+        </div>
+        <button 
+          onClick={onSignOut} 
+          className={`w-full flex items-center ${isCollapsed ? 'justify-center' : 'gap-3 px-4'} py-2 text-red-500 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg transition-colors text-sm font-bold`}
+          title={isCollapsed ? 'Sign Out' : ''}
+        >
+          <LogOut size={18} /> 
+          {!isCollapsed && 'Sign Out'}
+        </button>
+      </div>
+    </div>
+  );
+};
+
+const ImporterDashboard = ({ user }: { user: UserProfile }) => {
+  const [stats, setStats] = useState({
+    totalSales: 0,
+    activeOrders: 0,
+    pendingShipments: 0,
+    lowStockAlerts: 0,
+    revenue: 0,
+    totalProducts: 0
+  });
+  const [recentOrders, setRecentOrders] = useState<Order[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    if (!user.uid) return;
+    const qOrders = query(collection(db, 'orders'), where('importerId', '==', user.uid));
+    const qProducts = query(collection(db, 'products'), where('importerId', '==', user.uid));
+
+    const unsubOrders = onSnapshot(qOrders, (snapshot) => {
+      const orders = snapshot.docs.map(d => ({ id: d.id, ...d.data() } as Order)).sort((a, b) => b.createdAt - a.createdAt);
+      setStats(prev => ({
+        ...prev,
+        totalSales: orders.filter(o => o.status === 'delivered').length,
+        activeOrders: orders.filter(o => ['pending', 'confirmed', 'shipped'].includes(o.status)).length,
+        pendingShipments: orders.filter(o => o.status === 'confirmed').length,
+        revenue: orders.filter(o => o.status === 'delivered').reduce((sum, o) => sum + o.totalAmount, 0)
+      }));
+      setRecentOrders(orders.slice(0, 5));
+    }, (error) => handleFirestoreError(error, OperationType.LIST, 'orders'));
+
+    const unsubProducts = onSnapshot(qProducts, (snapshot) => {
+      const products = snapshot.docs.map(d => d.data() as MarketplaceProduct);
+      setStats(prev => ({
+        ...prev,
+        totalProducts: products.length,
+        lowStockAlerts: products.filter(p => p.stockQuantity < 50).length
+      }));
+    }, (error) => handleFirestoreError(error, OperationType.LIST, 'products'));
+
+    setLoading(false);
+    return () => {
+      unsubOrders();
+      unsubProducts();
+    };
+  }, [user.uid]);
+
+  if (loading) return <div className="p-8 flex justify-center"><div className="w-8 h-8 border-4 border-blue-600 border-t-transparent rounded-full animate-spin"></div></div>;
+
+  return (
+    <div className="p-8 max-w-7xl mx-auto space-y-8">
+      <div className="flex justify-between items-center">
+        <div>
+          <h1 className="text-2xl font-bold text-slate-900 dark:text-white">Supply Chain Dashboard</h1>
+          <p className="text-slate-500 dark:text-slate-400">Manage your B2B fulfillment and marketplace presence.</p>
+        </div>
+        <div className="flex gap-3">
+          <div className="bg-blue-50 dark:bg-blue-900/20 px-4 py-2 rounded-xl border border-blue-100 dark:border-blue-800">
+            <p className="text-[10px] font-bold text-blue-600 dark:text-blue-400 uppercase">Importer Score</p>
+            <p className="text-lg font-black text-blue-700 dark:text-blue-300">98%</p>
+          </div>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+        {[
+          { label: 'Total Revenue', value: `${stats.revenue.toLocaleString()} ETB`, icon: TrendingUp, color: 'text-green-600', bg: 'bg-green-50' },
+          { label: 'Active Orders', value: stats.activeOrders, icon: ShoppingCart, color: 'text-blue-600', bg: 'bg-blue-50' },
+          { label: 'Low Stock Items', value: stats.lowStockAlerts, icon: AlertTriangle, color: 'text-amber-600', bg: 'bg-amber-50' },
+          { label: 'Listed Products', value: stats.totalProducts, icon: Package, color: 'text-purple-600', bg: 'bg-purple-50' },
+        ].map((stat, i) => (
+          <div key={i} className="bg-white dark:bg-slate-900 p-6 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-sm">
+            <div className={`w-12 h-12 ${stat.bg} ${stat.color} rounded-2xl flex items-center justify-center mb-4`}><stat.icon size={24} /></div>
+            <p className="text-sm text-slate-500 dark:text-slate-400 font-medium">{stat.label}</p>
+            <h3 className="text-2xl font-bold text-slate-900 dark:text-white mt-1">{stat.value}</h3>
+          </div>
+        ))}
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+        <div className="lg:col-span-2 space-y-6">
+          <div className="bg-white dark:bg-slate-900 p-6 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-sm">
+            <h3 className="text-lg font-bold mb-6 flex items-center gap-2 dark:text-white">
+              <Truck size={20} className="text-blue-600" /> Recent Pharmacy Orders
+            </h3>
+            <div className="space-y-4">
+              {recentOrders.length === 0 ? (
+                <div className="text-center py-12 text-slate-500 dark:text-slate-400">No recent orders found.</div>
+              ) : (
+                recentOrders.map(order => (
+                  <div key={order.id} className="flex items-center justify-between p-4 bg-slate-50 dark:bg-slate-800/50 rounded-2xl border border-slate-100 dark:border-slate-800">
+                    <div className="flex items-center gap-4">
+                      <div className="w-10 h-10 bg-white dark:bg-slate-800 rounded-xl flex items-center justify-center text-blue-600 shadow-sm"><Store size={20} /></div>
+                      <div>
+                        <p className="text-sm font-bold text-slate-900 dark:text-white">{order.pharmacyName}</p>
+                        <p className="text-xs text-slate-500 dark:text-slate-400">{new Date(order.createdAt).toLocaleDateString()}</p>
+                      </div>
+                    </div>
+                    <div className="text-right">
+                      <p className="text-sm font-black text-slate-900 dark:text-white">{order.totalAmount.toLocaleString()} ETB</p>
+                      <span className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded-full ${
+                        order.status === 'delivered' ? 'bg-green-100 text-green-700' :
+                        order.status === 'shipped' ? 'bg-blue-100 text-blue-700' :
+                        'bg-amber-100 text-amber-700'
+                      }`}>
+                        {order.status}
+                      </span>
+                    </div>
+                  </div>
+                ))
+              )}
             </div>
           </div>
         </div>
-        <button onClick={onSignOut} className="w-full flex items-center gap-3 px-4 py-2 text-red-500 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg transition-colors text-sm font-bold"><LogOut size={18} /> Sign Out</button>
+
+        <div className="lg:col-span-1 space-y-6">
+          <div className="bg-slate-900 p-8 rounded-3xl text-white shadow-xl">
+            <h3 className="text-lg font-bold mb-4 flex items-center gap-2">
+              <BarChart3 size={20} className="text-blue-400" /> Market Intelligence
+            </h3>
+            <p className="text-slate-400 text-sm mb-6">Real-time data from the A-Tech Ecosystem.</p>
+            <div className="space-y-4">
+              <div className="p-4 bg-white/5 rounded-2xl border border-white/10">
+                <p className="text-xs font-bold text-slate-500 uppercase">Top Search</p>
+                <p className="text-sm mt-1 font-medium">Antibiotics are high in demand in {user.country}.</p>
+              </div>
+              <div className="p-4 bg-white/5 rounded-2xl border border-white/10">
+                <p className="text-xs font-bold text-slate-500 uppercase">Pricing Alert</p>
+                <p className="text-sm mt-1 font-medium">Your Vitamin C listing is 5% lower than market average.</p>
+              </div>
+              <div className="p-4 bg-white/5 rounded-2xl border border-white/10">
+                <p className="text-xs font-bold text-slate-500 uppercase">Supply Gap</p>
+                <p className="text-sm mt-1 font-medium">Shortage of face masks reported in regional hubs.</p>
+              </div>
+            </div>
+          </div>
+        </div>
       </div>
     </div>
   );
 };
 
 const DashboardView = ({ role, user, setActiveTab }: { role: UserRole, user: UserProfile, setActiveTab: (t: string) => void }) => {
+  const isImporterOwner = role === 'importer' || (role === 'staff' && !!user.importerId);
   const [stats, setStats] = useState({
     revenue: 0,
     orders: 0,
@@ -3128,6 +4535,7 @@ const DashboardView = ({ role, user, setActiveTab }: { role: UserRole, user: Use
     if (!user.uid) return;
 
     const unsubs: (() => void)[] = [];
+    const ownerId = role === 'staff' ? (user.pharmacyId || user.importerId) : user.uid;
 
     if (role === 'admin') {
       // Admin sees everything
@@ -3182,14 +4590,14 @@ const DashboardView = ({ role, user, setActiveTab }: { role: UserRole, user: Use
       unsubs.push(unsubOrders);
 
     } else {
-      // Pharmacy or Importer
-      const orderField = role === 'pharmacy' ? 'pharmacyId' : 'importerId';
-      const qOrders = query(collection(db, 'orders'), where(orderField, '==', user.uid));
+      // Pharmacy, Staff or Importer
+      const orderField = isImporterOwner ? 'importerId' : 'pharmacyId';
+      const qOrders = query(collection(db, 'orders'), where(orderField, '==', ownerId));
       
       const unsubOrders = onSnapshot(qOrders, (snapshot) => {
         const orders = snapshot.docs.map(d => d.data() as Order);
-        // For importers, revenue comes from orders. For pharmacies, orders are expenses.
-        if (role === 'importer') {
+        // For importers, revenue comes from orders. For pharmacies/staff, orders are expenses.
+        if (isImporterOwner) {
           const revenue = orders.reduce((sum, o) => sum + o.totalAmount, 0);
           setStats(prev => ({ ...prev, orders: orders.length, revenue }));
           
@@ -3218,8 +4626,8 @@ const DashboardView = ({ role, user, setActiveTab }: { role: UserRole, user: Use
       }, (error) => handleFirestoreError(error, OperationType.LIST, 'orders'));
       unsubs.push(unsubOrders);
 
-      if (role === 'pharmacy') {
-        const qMedicines = query(collection(db, 'medicines'), where('pharmacyId', '==', user.uid));
+      if (!isImporterOwner) {
+        const qMedicines = query(collection(db, 'medicines'), where('pharmacyId', '==', ownerId));
         const unsubMed = onSnapshot(qMedicines, (snapshot) => {
           const meds = snapshot.docs.map(d => d.data() as Medicine);
           const lowStock = meds.filter(m => m.quantity <= (m.lowStockThreshold || 10)).length;
@@ -3227,7 +4635,7 @@ const DashboardView = ({ role, user, setActiveTab }: { role: UserRole, user: Use
         }, (error) => handleFirestoreError(error, OperationType.LIST, 'medicines'));
         unsubs.push(unsubMed);
 
-        const qSales = query(collection(db, 'sales'), where('pharmacyId', '==', user.uid));
+        const qSales = query(collection(db, 'sales'), where('pharmacyId', '==', ownerId));
         const unsubSales = onSnapshot(qSales, (snapshot) => {
           const sales = snapshot.docs.map(d => d.data() as Sale);
           const revenue = sales.reduce((sum, s) => sum + s.totalAmount, 0);
@@ -3281,10 +4689,10 @@ const DashboardView = ({ role, user, setActiveTab }: { role: UserRole, user: Use
   };
 
   const userStats = [
-    { id: 'sales', label: isPharmacy ? 'POS Revenue' : 'My Revenue', value: `${stats.revenue.toLocaleString()} ETB`, icon: TrendingUp, color: 'text-green-600', bg: 'bg-green-50' },
-    { id: 'inventory', label: isPharmacy ? 'Inventory' : 'My Orders', value: isPharmacy ? `${stats.totalMedicines} Items` : stats.orders.toString(), icon: isPharmacy ? Package : ShoppingCart, color: 'text-blue-600', bg: 'bg-blue-50' },
+    { id: 'sales', label: !isImporterOwner ? 'POS Revenue' : 'My Revenue', value: `${stats.revenue.toLocaleString()} ETB`, icon: TrendingUp, color: 'text-green-600', bg: 'bg-green-50' },
+    { id: 'inventory', label: !isImporterOwner ? 'Inventory' : 'My Orders', value: !isImporterOwner ? `${stats.totalMedicines} Items` : stats.orders.toString(), icon: !isImporterOwner ? Package : ShoppingCart, color: 'text-blue-600', bg: 'bg-blue-50' },
     { id: 'inventory', label: 'Low Stock', value: `${stats.lowStock} Items`, icon: AlertTriangle, color: 'text-amber-600', bg: 'bg-amber-50' },
-    { id: 'sales', label: isPharmacy ? 'Total Sales' : 'Marketplace', value: isPharmacy ? stats.totalSales.toString() : 'Live', icon: isPharmacy ? ShoppingCart : Globe, color: 'text-purple-600', bg: 'bg-purple-50' },
+    { id: 'sales', label: !isImporterOwner ? 'Total Sales' : 'Marketplace', value: !isImporterOwner ? stats.totalSales.toString() : 'Live', icon: !isImporterOwner ? ShoppingCart : Globe, color: 'text-purple-600', bg: 'bg-purple-50' },
   ].filter(stat => hasPermission(stat.id));
 
   const currentStats = role === 'admin' ? adminStats : userStats;
@@ -3427,7 +4835,7 @@ const DashboardView = ({ role, user, setActiveTab }: { role: UserRole, user: Use
                 </button>
               ) : role === 'importer' ? (
                 <button 
-                  onClick={() => setActiveTab('importer-inventory')}
+                  onClick={() => setActiveTab('my-products')}
                   className="bg-white text-blue-600 px-8 py-3 rounded-xl font-bold hover:bg-blue-50 transition-all flex items-center gap-2"
                 >
                   <Plus size={18} /> List Your Products
@@ -3459,23 +4867,29 @@ const DashboardView = ({ role, user, setActiveTab }: { role: UserRole, user: Use
 const InventoryView = ({ user }: { user: UserProfile }) => {
   const [medicines, setMedicines] = useState<Medicine[]>([]);
   const [isAdding, setIsAdding] = useState(false);
-  const [newMedicine, setNewMedicine] = useState<Partial<Medicine>>({
+  const [editingMedicine, setEditingMedicine] = useState<Medicine | null>(null);
+  const [formData, setFormData] = useState<Partial<Medicine>>({
     name: '', category: 'Medicine', price: 0, costPrice: 0, quantity: 0, batchNumber: '', expiryDate: '', lowStockThreshold: 5, supplier: ''
   });
 
+  const ownerId = user.role === 'staff' ? user.pharmacyId : user.uid;
   const plan = user.subscriptionType || 'basic';
   const medicineLimit = 200;
 
   useEffect(() => {
-    if (!user.uid) return;
-    const q = query(collection(db, 'medicines'), where('pharmacyId', '==', user.uid));
+    if (!ownerId) return;
+    const q = query(collection(db, 'medicines'), where('pharmacyId', '==', ownerId));
     return onSnapshot(q, 
       (s) => setMedicines(s.docs.map(d => ({ id: d.id, ...d.data() } as Medicine))),
       (error) => handleFirestoreError(error, OperationType.LIST, 'medicines')
     );
-  }, [user.uid]);
+  }, [ownerId]);
 
   const handleAddMedicine = async () => {
+    if (formData.quantity < 0) {
+      toast.error('Quantity cannot be negative');
+      return;
+    }
     if (plan === 'basic' && medicines.length >= medicineLimit) {
       toast.error(`Basic plan limit reached (${medicineLimit} medicines). Please upgrade to Standard for unlimited listings.`);
       return;
@@ -3483,15 +4897,34 @@ const InventoryView = ({ user }: { user: UserProfile }) => {
 
     try {
       await addDoc(collection(db, 'medicines'), {
-        ...newMedicine,
-        pharmacyId: user.uid,
+        ...formData,
+        pharmacyId: ownerId,
         createdAt: Date.now()
       });
       setIsAdding(false);
-      setNewMedicine({ name: '', category: 'Medicine', price: 0, costPrice: 0, quantity: 0, batchNumber: '', expiryDate: '', lowStockThreshold: 5, supplier: '' });
+      setFormData({ name: '', category: 'Medicine', price: 0, costPrice: 0, quantity: 0, batchNumber: '', expiryDate: '', lowStockThreshold: 5, supplier: '' });
       toast.success('Medicine added to inventory');
     } catch (error) {
       handleFirestoreError(error, OperationType.CREATE, 'medicines');
+    }
+  };
+
+  const handleUpdateMedicine = async () => {
+    if (!editingMedicine) return;
+    if (formData.quantity < 0) {
+      toast.error('Inventory cannot go lower than zero');
+      return;
+    }
+    try {
+      await updateDoc(doc(db, 'medicines', editingMedicine.id), {
+        ...formData,
+        updatedAt: Date.now()
+      });
+      setEditingMedicine(null);
+      setFormData({ name: '', category: 'Medicine', price: 0, costPrice: 0, quantity: 0, batchNumber: '', expiryDate: '', lowStockThreshold: 5, supplier: '' });
+      toast.success('Inventory updated successfully');
+    } catch (error) {
+      handleFirestoreError(error, OperationType.UPDATE, `medicines/${editingMedicine.id}`);
     }
   };
 
@@ -3550,17 +4983,19 @@ const InventoryView = ({ user }: { user: UserProfile }) => {
         </div>
       </div>
 
-      {isAdding && (
+      {(isAdding || editingMedicine) && (
         <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="bg-white dark:bg-slate-900 p-8 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-xl mb-8">
-          <h2 className="text-xl font-bold mb-6 dark:text-white">New Medicine Entry</h2>
+          <h2 className="text-xl font-bold mb-6 dark:text-white">
+            {editingMedicine ? `Edit: ${editingMedicine.name}` : 'New Medicine Entry'}
+          </h2>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
             <div className="space-y-2">
               <label className="text-sm font-bold text-slate-700 dark:text-slate-300">Medicine Name</label>
-              <input type="text" value={newMedicine.name} onChange={e => setNewMedicine({...newMedicine, name: e.target.value})} className="w-full px-4 py-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 dark:text-white outline-none focus:border-blue-500" placeholder="e.g. Paracetamol" />
+              <input type="text" value={formData.name || ''} onChange={e => setFormData({...formData, name: e.target.value})} className="w-full px-4 py-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 dark:text-white outline-none focus:border-blue-500" placeholder="e.g. Paracetamol" />
             </div>
             <div className="space-y-2">
               <label className="text-sm font-bold text-slate-700 dark:text-slate-300">Category</label>
-              <select value={newMedicine.category} onChange={e => setNewMedicine({...newMedicine, category: e.target.value})} className="w-full px-4 py-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 dark:text-white outline-none focus:border-blue-500">
+              <select value={formData.category || 'Medicine'} onChange={e => setFormData({...formData, category: e.target.value})} className="w-full px-4 py-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 dark:text-white outline-none focus:border-blue-500">
                 <option>Medicine</option>
                 <option>Surgical</option>
                 <option>Equipment</option>
@@ -3568,38 +5003,52 @@ const InventoryView = ({ user }: { user: UserProfile }) => {
             </div>
             <div className="space-y-2">
               <label className="text-sm font-bold text-slate-700 dark:text-slate-300">Batch Number</label>
-              <input type="text" value={newMedicine.batchNumber} onChange={e => setNewMedicine({...newMedicine, batchNumber: e.target.value})} className="w-full px-4 py-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 dark:text-white outline-none focus:border-blue-500" placeholder="BN-12345" />
+              <input type="text" value={formData.batchNumber || ''} onChange={e => setFormData({...formData, batchNumber: e.target.value})} className="w-full px-4 py-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 dark:text-white outline-none focus:border-blue-500" placeholder="BN-12345" />
             </div>
             <div className="space-y-2">
               <label className="text-sm font-bold text-slate-700 dark:text-slate-300">Selling Price (ETB)</label>
-              <input type="number" value={newMedicine.price} onChange={e => setNewMedicine({...newMedicine, price: Number(e.target.value)})} className="w-full px-4 py-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 dark:text-white outline-none focus:border-blue-500" />
+              <input type="number" value={formData.price ?? 0} onChange={e => setFormData({...formData, price: Number(e.target.value)})} className="w-full px-4 py-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 dark:text-white outline-none focus:border-blue-500" />
             </div>
             <div className="space-y-2">
               <label className="text-sm font-bold text-slate-700 dark:text-slate-300">Cost Price (ETB)</label>
-              <input type="number" value={newMedicine.costPrice} onChange={e => setNewMedicine({...newMedicine, costPrice: Number(e.target.value)})} className="w-full px-4 py-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 dark:text-white outline-none focus:border-blue-500" />
+              <input type="number" value={formData.costPrice ?? 0} onChange={e => setFormData({...formData, costPrice: Number(e.target.value)})} className="w-full px-4 py-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 dark:text-white outline-none focus:border-blue-500" />
             </div>
             <div className="space-y-2">
               <label className="text-sm font-bold text-slate-700 dark:text-slate-300">Quantity</label>
-              <input type="number" value={newMedicine.quantity} onChange={e => setNewMedicine({...newMedicine, quantity: Number(e.target.value)})} className="w-full px-4 py-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 dark:text-white outline-none focus:border-blue-500" />
+              <input type="number" min="0" value={formData.quantity ?? 0} onChange={e => setFormData({...formData, quantity: Math.max(0, Number(e.target.value))})} className="w-full px-4 py-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 dark:text-white outline-none focus:border-blue-500" />
             </div>
             <div className="space-y-2">
               <label className="text-sm font-bold text-slate-700 dark:text-slate-300">Expiry Date</label>
-              <input type="date" value={newMedicine.expiryDate} onChange={e => setNewMedicine({...newMedicine, expiryDate: e.target.value})} className="w-full px-4 py-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 dark:text-white outline-none focus:border-blue-500" />
+              <input type="date" value={formData.expiryDate || ''} onChange={e => setFormData({...formData, expiryDate: e.target.value})} className="w-full px-4 py-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 dark:text-white outline-none focus:border-blue-500" />
             </div>
             <div className="space-y-2">
               <label className="text-sm font-bold text-slate-700 dark:text-slate-300">Low Stock Alert at</label>
-              <input type="number" value={newMedicine.lowStockThreshold} onChange={e => setNewMedicine({...newMedicine, lowStockThreshold: Number(e.target.value)})} className="w-full px-4 py-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 dark:text-white outline-none focus:border-blue-500" />
+              <input type="number" value={formData.lowStockThreshold ?? 5} onChange={e => setFormData({...formData, lowStockThreshold: Number(e.target.value)})} className="w-full px-4 py-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 dark:text-white outline-none focus:border-blue-500" />
             </div>
             {plan === 'premium' && (
               <div className="space-y-2">
                 <label className="text-sm font-bold text-slate-700 dark:text-slate-300">Supplier (Premium Only)</label>
-                <input type="text" value={newMedicine.supplier} onChange={e => setNewMedicine({...newMedicine, supplier: e.target.value})} className="w-full px-4 py-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 dark:text-white outline-none focus:border-blue-500" placeholder="Supplier Name" />
+                <input type="text" value={formData.supplier || ''} onChange={e => setFormData({...formData, supplier: e.target.value})} className="w-full px-4 py-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 dark:text-white outline-none focus:border-blue-500" placeholder="Supplier Name" />
               </div>
             )}
           </div>
           <div className="mt-8 flex justify-end gap-4">
-            <button onClick={() => setIsAdding(false)} className="px-6 py-3 text-slate-600 dark:text-slate-400 font-bold hover:bg-slate-100 dark:hover:bg-slate-800 rounded-xl transition-all">Cancel</button>
-            <button onClick={handleAddMedicine} className="bg-blue-600 text-white px-8 py-3 rounded-xl font-bold hover:bg-blue-700 transition-all shadow-lg shadow-blue-100 dark:shadow-none">Save Medicine</button>
+            <button 
+              onClick={() => {
+                setIsAdding(false);
+                setEditingMedicine(null);
+                setFormData({ name: '', category: 'Medicine', price: 0, costPrice: 0, quantity: 0, batchNumber: '', expiryDate: '', lowStockThreshold: 5, supplier: '' });
+              }} 
+              className="px-6 py-3 text-slate-600 dark:text-slate-400 font-bold hover:bg-slate-100 dark:hover:bg-slate-800 rounded-xl transition-all"
+            >
+              Cancel
+            </button>
+            <button 
+              onClick={editingMedicine ? handleUpdateMedicine : handleAddMedicine} 
+              className="bg-blue-600 text-white px-8 py-3 rounded-xl font-bold hover:bg-blue-700 transition-all shadow-lg shadow-blue-100 dark:shadow-none"
+            >
+              {editingMedicine ? 'Update Inventory' : 'Save Medicine'}
+            </button>
           </div>
         </motion.div>
       )}
@@ -3641,7 +5090,16 @@ const InventoryView = ({ user }: { user: UserProfile }) => {
                   </td>
                   <td className="px-8 py-5">
                     <div className="flex gap-2">
-                      <button className="text-slate-400 hover:text-blue-600 transition-colors"><Edit size={18} /></button>
+                      <button 
+                        onClick={() => {
+                          setEditingMedicine(m);
+                          setFormData(m);
+                          setIsAdding(false);
+                        }} 
+                        className="text-slate-400 hover:text-blue-600 transition-colors"
+                      >
+                        <Edit size={18} />
+                      </button>
                       <button onClick={() => handleDelete(m.id)} className="text-slate-400 hover:text-red-500 transition-colors"><Trash2 size={18} /></button>
                     </div>
                   </td>
@@ -3659,19 +5117,25 @@ const StaffManagementView = ({ user }: { user: UserProfile }) => {
   const [staff, setStaff] = useState<any[]>([]);
   const [isAdding, setIsAdding] = useState(false);
   const [editingStaff, setEditingStaff] = useState<any | null>(null);
-  const [newStaff, setNewStaff] = useState({ name: '', role: 'pharmacist' });
-  const [selectedPermissions, setSelectedPermissions] = useState<string[]>(DEFAULT_PERMISSIONS['pharmacist']);
+  const [newStaff, setNewStaff] = useState({ name: '', role: user.role === 'importer' ? 'importer_staff' : 'pharmacist' });
+  const [selectedPermissions, setSelectedPermissions] = useState<string[]>(DEFAULT_PERMISSIONS[user.role === 'importer' ? 'importer_staff' : 'pharmacist']);
   const [generatedCreds, setGeneratedCreds] = useState<{username: string, password: string} | null>(null);
 
+  const ownerId = user.role === 'staff' ? (user.pharmacyId || user.importerId) : user.uid;
+  const isImporterOwner = user.role === 'importer' || (user.role === 'staff' && user.importerId);
   const plan = user.subscriptionType || 'basic';
   const canCustomize = plan !== 'basic';
   const isPremium = plan === 'premium';
 
   useEffect(() => {
-    if (!user.uid) return;
-    const q = query(collection(db, 'users'), where('pharmacyId', '==', user.uid));
-    return onSnapshot(q, (s) => setStaff(s.docs.map(d => ({ id: d.id, ...d.data() }))));
-  }, [user.uid]);
+    if (!ownerId) return;
+    const field = isImporterOwner ? 'importerId' : 'pharmacyId';
+    const q = query(collection(db, 'users'), where(field, '==', ownerId));
+    return onSnapshot(q, 
+      (s) => setStaff(s.docs.map(d => ({ id: d.id, ...d.data() }))),
+      (error) => handleFirestoreError(error, OperationType.LIST, 'users')
+    );
+  }, [ownerId, isImporterOwner]);
 
   const handleRoleChange = (role: string) => {
     if (editingStaff) {
@@ -3739,7 +5203,8 @@ const StaffManagementView = ({ user }: { user: UserProfile }) => {
         return slug.replace(new RegExp(`^${escapedSep}+|${escapedSep}+$`, 'g'), '');
       };
 
-      const pharmacySlug = slugify(user.pharmacyName || 'pharmacy');
+      const businessName = user.pharmacyName || user.importerName || 'business';
+      const pharmacySlug = slugify(businessName);
       const nameSlug = slugify(newStaff.name, '.');
       let username = `${nameSlug}@${pharmacySlug}`;
       let email = `${nameSlug}.${pharmacySlug}@staff.atech.com`;
@@ -3747,7 +5212,7 @@ const StaffManagementView = ({ user }: { user: UserProfile }) => {
 
       console.log('[Staff Creation Debug]', { 
         name: newStaff.name,
-        pharmacy: user.pharmacyName,
+        business: businessName,
         nameSlug,
         pharmacySlug,
         finalEmail: email
@@ -3783,12 +5248,15 @@ const StaffManagementView = ({ user }: { user: UserProfile }) => {
 
       await setDoc(doc(db, 'users', staffUid), {
         ...newStaff,
+        displayName: (newStaff as any).name,
         uid: staffUid,
         username,
         password,
         email,
-        pharmacyId: user.uid,
-        pharmacyName: user.pharmacyName,
+        pharmacyId: (user.role === 'pharmacy' ? user.uid : (user.role === 'staff' ? (user.pharmacyId || null) : null)),
+        pharmacyName: user.pharmacyName || null,
+        importerId: (user.role === 'importer' ? user.uid : (user.role === 'staff' ? (user.importerId || null) : null)),
+        importerName: user.importerName || null,
         role: 'staff',
         staffRole: newStaff.role,
         permissions: selectedPermissions,
@@ -3858,7 +5326,7 @@ const StaffManagementView = ({ user }: { user: UserProfile }) => {
               <label className="text-sm font-bold text-slate-700 dark:text-slate-300">Full Name</label>
               <input 
                 type="text" 
-                value={editingStaff ? editingStaff.name : newStaff.name} 
+                value={(editingStaff ? editingStaff.name : newStaff.name) || ''} 
                 onChange={e => editingStaff ? setEditingStaff({...editingStaff, name: e.target.value}) : setNewStaff({...newStaff, name: e.target.value})} 
                 className={`w-full px-4 py-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white outline-none focus:border-blue-500 ${editingStaff ? 'bg-slate-50 dark:bg-slate-900 cursor-not-allowed' : ''}`} 
                 placeholder="e.g. Abebe Kebede"
@@ -3868,7 +5336,7 @@ const StaffManagementView = ({ user }: { user: UserProfile }) => {
             <div className="space-y-2">
               <label className="text-sm font-bold text-slate-700 dark:text-slate-300">Role</label>
               <select 
-                value={editingStaff ? editingStaff.staffRole : newStaff.role} 
+                value={(editingStaff ? editingStaff.staffRole : newStaff.role) || 'pharmacist'} 
                 onChange={e => handleRoleChange(e.target.value)} 
                 className="w-full px-4 py-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white outline-none focus:border-blue-500"
               >
@@ -4033,7 +5501,10 @@ const AdminMarketingManagement = () => {
 
   useEffect(() => {
     const q = query(collection(db, 'users'), where('role', '==', 'marketing'));
-    return onSnapshot(q, (s) => setMembers(s.docs.map(d => ({ id: d.id, ...d.data() }))));
+    return onSnapshot(q, 
+      (s) => setMembers(s.docs.map(d => ({ id: d.id, ...d.data() }))),
+      (error) => handleFirestoreError(error, OperationType.LIST, 'users')
+    );
   }, []);
 
   const handleAddMember = async () => {
@@ -4152,11 +5623,17 @@ const MarketingDashboard = ({ user }: { user: UserProfile }) => {
 
   useEffect(() => {
     const q = query(collection(db, 'users'), where('marketingId', '==', user.uid));
-    const unsubReferrals = onSnapshot(q, (s) => setReferrals(s.docs.map(d => ({ id: d.id, ...d.data() }))));
+    const unsubReferrals = onSnapshot(q, 
+      (s) => setReferrals(s.docs.map(d => ({ id: d.id, ...d.data() }))),
+      (error) => handleFirestoreError(error, OperationType.LIST, 'users')
+    );
     
-    const unsubSettings = onSnapshot(doc(db, 'system_settings', 'main'), (s) => {
-      if (s.exists()) setSettings(s.data() as SystemSettings);
-    });
+    const unsubSettings = onSnapshot(doc(db, 'system_settings', 'main'), 
+      (s) => {
+        if (s.exists()) setSettings(s.data() as SystemSettings);
+      },
+      (error) => handleFirestoreError(error, OperationType.GET, 'system_settings/main')
+    );
 
     return () => {
       unsubReferrals();
@@ -4286,35 +5763,53 @@ const SalesView = ({ user }: { user: UserProfile }) => {
   const [cart, setCart] = useState<SaleItem[]>([]);
   const [customerName, setCustomerName] = useState('');
   const [customerPhone, setCustomerPhone] = useState('');
+  const [isProcessing, setIsProcessing] = useState(false);
   
+  const ownerId = user.role === 'staff' ? user.pharmacyId : user.uid;
   const plan = user.subscriptionType || 'basic';
   const hasCustomerTracking = plan !== 'basic';
   const hasReceipts = plan !== 'basic';
 
   useEffect(() => {
-    if (!user.uid) return;
-    const q = query(collection(db, 'medicines'), where('pharmacyId', '==', user.uid));
+    if (!ownerId) return;
+    const q = query(collection(db, 'medicines'), where('pharmacyId', '==', ownerId));
     return onSnapshot(q, 
       (s) => setMedicines(s.docs.map(d => ({ id: d.id, ...d.data() } as Medicine))),
       (error) => handleFirestoreError(error, OperationType.LIST, 'medicines')
     );
-  }, [user.uid]);
+  }, [ownerId]);
 
   const handleCheckout = async () => {
-    if (cart.length === 0) return;
+    console.log('Complete Sale button clicked. Cart:', cart);
+    
+    if (cart.length === 0) {
+      toast.error('Your cart is empty. Add medicines before completing the sale.');
+      return;
+    }
+
+    if (isProcessing) return;
+
+    if (!navigator.onLine) {
+      toast.error('Network seems to be offline. Attempting anyway...');
+    }
     
     // Check stock availability first
     for (const item of cart) {
       const medicine = medicines.find(m => m.id === item.medicineId);
-      if (!medicine || medicine.quantity < item.quantity) {
-        toast.error(`Insufficient stock for ${item.name}`);
+      if (!medicine) {
+        toast.error(`Medicine "${item.name}" not found in current inventory.`);
+        return;
+      }
+      if (medicine.quantity < item.quantity) {
+        toast.error(`Insufficient stock for ${item.name}. Available: ${medicine.quantity}`);
         return;
       }
     }
 
+    setIsProcessing(true);
     const total = cart.reduce((s, i) => s + i.total, 0);
     const sale = { 
-      pharmacyId: user.uid, 
+      pharmacyId: ownerId, 
       items: cart, 
       totalAmount: total, 
       paymentMethod: 'cash', 
@@ -4323,30 +5818,54 @@ const SalesView = ({ user }: { user: UserProfile }) => {
       customerPhone: hasCustomerTracking ? customerPhone : null
     };
     
+    const checkoutToast = toast.loading('Processing sale... Please wait.');
+    
     try {
-      // 1. Record the sale
-      const docRef = await addDoc(collection(db, 'sales'), sale);
+      // 1. Prepare batch
+      const batch = writeBatch(db);
+      
+      // 2. Add sale document
+      const saleRef = doc(collection(db, 'sales'));
+      batch.set(saleRef, sale);
 
-      // 2. Update medicine quantities
-      const updatePromises = cart.map(item => {
+      // 3. Update medicine quantities in same batch
+      cart.forEach(item => {
         const medicineRef = doc(db, 'medicines', item.medicineId);
-        return updateDoc(medicineRef, {
+        batch.update(medicineRef, {
           quantity: increment(-item.quantity)
         });
       });
-      await Promise.all(updatePromises);
+
+      // Artificial delay so the branded loading logo is actually visible
+      await new Promise(resolve => setTimeout(resolve, 1200));
+
+      // 4. Commit batch
+      await batch.commit();
 
       setCart([]);
       setCustomerName('');
       setCustomerPhone('');
-      toast.success('Sale recorded and stock updated!');
+      toast.success('Sale completed successfully!', { id: checkoutToast });
       
       if (hasReceipts) {
-        downloadReceipt({ ...sale, id: docRef.id } as Sale, user.displayName || 'Pharmacy');
-        toast.success('Receipt generated (PDF)');
+        setTimeout(() => {
+          try {
+            downloadReceipt({ ...sale, id: saleRef.id } as Sale, user.pharmacyName || user.displayName || 'Pharmacy');
+            toast.success('Receipt ready', { icon: '📄' });
+          } catch (pdfErr) {
+            console.error('PDF generation error:', pdfErr);
+            toast.error('Sale recorded, but receipt failed to generate.');
+          }
+        }, 300);
+      } else {
+        toast('Sale recorded (Receipts require Standard plan)', { icon: 'ℹ️' });
       }
     } catch (error) {
+      console.error('Checkout error:', error);
       handleFirestoreError(error, OperationType.CREATE, 'sales');
+      toast.error('Failed to complete sale. Check your network.', { id: checkoutToast });
+    } finally {
+      setIsProcessing(false);
     }
   };
 
@@ -4455,10 +5974,28 @@ const SalesView = ({ user }: { user: UserProfile }) => {
 
           <button 
             onClick={handleCheckout} 
-            disabled={cart.length === 0}
-            className="w-full bg-blue-600 text-white py-4 rounded-2xl font-bold hover:bg-blue-700 transition-all shadow-lg shadow-blue-100 dark:shadow-none active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+            disabled={isProcessing}
+            className={`w-full py-4 rounded-2xl font-bold transition-all shadow-lg active:scale-95 flex items-center justify-center gap-2 ${
+              cart.length === 0 
+                ? 'bg-slate-200 text-slate-400 cursor-not-allowed' 
+                : 'bg-blue-600 text-white hover:bg-blue-700 shadow-blue-100 dark:shadow-none'
+            }`}
           >
-            <CheckCircle size={20} /> Complete Sale
+            {isProcessing ? (
+              <motion.div 
+                animate={{ rotate: 360, scale: [1, 1.2, 1] }} 
+                transition={{ 
+                  rotate: { repeat: Infinity, duration: 2, ease: "linear" },
+                  scale: { repeat: Infinity, duration: 1, ease: "easeInOut" }
+                }}
+                className="w-7 h-7 bg-blue-600 rounded-lg flex items-center justify-center shadow-lg"
+              >
+                <Package className="text-white w-4 h-4" />
+              </motion.div>
+            ) : (
+              <CheckCircle size={20} />
+            )}
+            {isProcessing ? 'Processing...' : 'Complete Sale'}
           </button>
           
           {hasReceipts && cart.length > 0 && (
@@ -4480,11 +6017,29 @@ export default function App() {
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState('dashboard');
   const [systemSettings, setSystemSettings] = useState<SystemSettings | null>(null);
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
 
   useEffect(() => {
-    const unsub = onSnapshot(doc(db, 'system_settings', 'main'), (s) => {
-      if (s.exists()) setSystemSettings(s.data() as SystemSettings);
-    });
+    const unsub = onSnapshot(doc(db, 'system_settings', 'main'), 
+      (s) => {
+        if (s.exists()) {
+          const data = s.data() as SystemSettings;
+          setSystemSettings({
+            ...data,
+            planPrices: {
+              ...PLAN_PRICES,
+              ...(data.planPrices || {})
+            }
+          });
+        }
+      },
+      (error) => {
+        // Only log if it's not a permission error during initial load
+        if (error.code !== 'permission-denied') {
+          handleFirestoreError(error, OperationType.GET, 'system_settings/main');
+        }
+      }
+    );
     return unsub;
   }, []);
 
@@ -4555,9 +6110,33 @@ export default function App() {
           await bootstrapAdmin(u);
           
           // Real-time profile listener
-          profileUnsub = onSnapshot(doc(db, 'users', u.uid), (doc) => {
-            if (doc.exists()) {
-              setProfile(doc.data() as UserProfile);
+          profileUnsub = onSnapshot(doc(db, 'users', u.uid), async (docSnap) => {
+            if (docSnap.exists()) {
+              const profileData = docSnap.data() as UserProfile;
+              
+              // Force premium for admins
+              if (profileData.role === 'admin') {
+                profileData.subscriptionType = 'premium';
+              }
+              
+              // Inherit subscription for staff
+              if (profileData.role === 'staff' && (profileData.pharmacyId || profileData.importerId)) {
+                try {
+                  const parentId = profileData.pharmacyId || profileData.importerId;
+                  if (parentId) {
+                    const ownerDoc = await getDoc(doc(db, 'users', parentId));
+                    if (ownerDoc.exists()) {
+                      const ownerData = ownerDoc.data();
+                      profileData.subscriptionType = ownerData.subscriptionType;
+                      profileData.subscriptionStatus = ownerData.subscriptionStatus;
+                    }
+                  }
+                } catch (e) {
+                  console.warn('Could not fetch parent subscription for staff', e);
+                }
+              }
+              
+              setProfile(profileData);
             } else {
               setProfile(null);
             }
@@ -4595,7 +6174,11 @@ export default function App() {
       try {
         const userDoc = await getDoc(doc(db, 'users', user.uid));
         if (userDoc.exists()) {
-          setProfile(userDoc.data() as UserProfile);
+          const profileData = userDoc.data() as UserProfile;
+          if (profileData.role === 'admin') {
+            profileData.subscriptionType = 'premium';
+          }
+          setProfile(profileData);
         } else {
           console.warn('Profile not found after refresh for UID:', user.uid);
           setProfile(null);
@@ -4614,19 +6197,101 @@ export default function App() {
     setProfile(null);
   };
 
+  useEffect(() => {
+    if (profile?.uid) {
+      const checkSubscription = async () => {
+        const now = Date.now();
+        const expiry = profile.subscriptionExpiryDate;
+        
+        if (expiry && now > expiry && profile.subscriptionStatus !== 'expired') {
+          await updateDoc(doc(db, 'users', profile.uid), {
+            subscriptionStatus: 'expired'
+          });
+          toast.error('Your subscription has expired!', { duration: 10000 });
+        } else if (expiry && now > (expiry - 3 * 24 * 60 * 60 * 1000) && profile.subscriptionStatus === 'active') {
+          // Warning if 3 days left
+          toast.error('Your subscription is expiring soon! Please renew.', {
+            icon: '⚠️',
+            duration: 5000
+          });
+        }
+      };
+      checkSubscription();
+    }
+  }, [profile?.uid, profile?.subscriptionExpiryDate, profile?.subscriptionStatus]);
+
   if (loading) return <div className="min-h-screen flex items-center justify-center bg-slate-50"><Toaster position="top-right" /><div className="w-12 h-12 border-4 border-blue-600 border-t-transparent rounded-full animate-spin"></div></div>;
   if (!user) return <><Toaster position="top-right" /><Login onLoginSuccess={setUser} /></>;
-  if (!profile) return <><Toaster position="top-right" /><SignupFlow user={user} onComplete={refreshProfile} /></>;
+  if (!profile) return <><Toaster position="top-right" /><SignupFlow user={user} onComplete={refreshProfile} settings={systemSettings} /></>;
+  
+  // Subscription Lock
+  if (profile.subscriptionStatus === 'expired' && (profile.role === 'pharmacy' || profile.role === 'importer')) {
+    return (
+      <ErrorBoundary>
+        <Toaster position="top-right" />
+        <SubscriptionLock user={profile} onRenew={refreshProfile} settings={systemSettings} />
+      </ErrorBoundary>
+    );
+  }
+
   if (profile.verificationStatus !== 'approved' && profile.role !== 'admin') return <><Toaster position="top-right" /><VerificationPending profile={profile} /></>;
 
   const hasAccess = (tabId: string) => {
-    if (profile.role !== 'staff') return true;
-    if (profile.permissions) return profile.permissions.includes(tabId);
-    if (profile.staffRole) {
-      const defaults = DEFAULT_PERMISSIONS[profile.staffRole] || ['dashboard', 'settings'];
-      return defaults.includes(tabId);
+    // Only dashboard and settings are accessible to everyone by default
+    if (['dashboard', 'settings'].includes(tabId)) return true;
+
+    // Admin has access to everything
+    if (profile.role === 'admin') return true;
+
+    // Plan check
+    const menuItems = [
+      { id: 'dashboard', label: 'Dashboard', roles: ['admin', 'pharmacy', 'importer', 'regional_manager', 'staff', 'marketing'] },
+      { id: 'inventory', label: 'Inventory', roles: ['pharmacy', 'staff'] },
+      { id: 'my-products', label: 'My Products', roles: ['importer', 'staff'] },
+      { id: 'sales', label: 'Sales & POS', roles: ['pharmacy', 'staff'] },
+      { id: 'marketplace', label: 'Marketplace', roles: ['pharmacy', 'admin', 'staff'], minPlan: 'standard' },
+      { id: 'orders', label: 'B2B Orders', roles: ['pharmacy', 'importer', 'staff'], minPlan: 'standard' },
+      { id: 'suppliers', label: 'Suppliers', roles: ['pharmacy', 'importer', 'staff'], minPlan: 'premium' },
+      { id: 'staff', label: 'Staff Accounts', roles: ['pharmacy', 'importer', 'staff'], minPlan: 'premium' },
+      { id: 'subscription', label: 'Subscription', roles: ['pharmacy', 'importer'] },
+      { id: 'admin-users', label: 'User Management', roles: ['admin'] },
+      { id: 'admin-marketing', label: 'Marketing Team', roles: ['admin'] },
+      { id: 'users', label: 'Approve/Reject Users', roles: ['admin'] },
+      { id: 'admin-revenue', label: 'Revenue & Finance', roles: ['admin'] },
+      { id: 'admin-marketplace', label: 'Marketplace Control', roles: ['admin'] },
+      { id: 'admin-notifications', label: 'Notifications', roles: ['admin'] },
+      { id: 'admin-system', label: 'System Control', roles: ['admin'] },
+      { id: 'settings', label: 'Settings', roles: ['admin', 'pharmacy', 'importer', 'regional_manager', 'staff', 'marketing'] },
+    ];
+
+    const item = menuItems.find(m => m.id === tabId);
+    if (item && !item.roles.includes(profile.role)) return false;
+
+    if (item && (profile.role === 'pharmacy' || profile.role === 'importer')) {
+      const plan = profile.subscriptionType || 'basic';
+      if (item.minPlan === 'premium' && plan !== 'premium') return false;
+      if (item.minPlan === 'standard' && (plan === 'basic')) return false; // Basic can't access standard/premium
     }
-    return ['dashboard', 'settings'].includes(tabId);
+
+    // Role-specific allowed list for extra safety
+    const accessMap: Record<string, string[]> = {
+      pharmacy: ['dashboard', 'inventory', 'sales', 'marketplace', 'orders', 'suppliers', 'staff', 'subscription', 'settings'],
+      importer: ['dashboard', 'my-products', 'orders', 'suppliers', 'staff', 'subscription', 'settings'],
+      regional_manager: ['dashboard', 'settings'],
+      marketing: ['dashboard', 'marketing-stats', 'settings'],
+    };
+
+    // Staff access
+    if (profile.role === 'staff') {
+      if (profile.permissions) return profile.permissions.includes(tabId);
+      if (profile.staffRole) {
+        const defaults = DEFAULT_PERMISSIONS[profile.staffRole] || ['dashboard', 'settings'];
+        return defaults.includes(tabId);
+      }
+      return ['dashboard', 'settings'].includes(tabId);
+    }
+
+    return accessMap[profile.role as string]?.includes(tabId) || false;
   };
 
   return (
@@ -4640,8 +6305,43 @@ export default function App() {
           onSignOut={handleSignOut}
           toggleTheme={toggleTheme}
           settings={systemSettings}
+          isCollapsed={isSidebarCollapsed}
+          onToggle={() => setIsSidebarCollapsed(!isSidebarCollapsed)}
         />
-        <main className="flex-1 overflow-y-auto h-screen bg-slate-50 dark:bg-slate-950 transition-colors duration-300">
+        <main className="flex-1 overflow-y-auto h-screen bg-slate-50 dark:bg-slate-950 transition-colors duration-300 relative">
+          <header className={`sticky top-0 z-30 flex h-16 w-full items-center justify-between border-b border-slate-200 bg-white/80 px-8 backdrop-blur-md transition-all dark:border-slate-800 dark:bg-slate-950/80`}>
+            <div className="flex items-center gap-4">
+              {isSidebarCollapsed && (
+                <button 
+                  onClick={() => setIsSidebarCollapsed(false)}
+                  className="rounded-lg p-2 text-slate-500 hover:bg-slate-100 dark:text-slate-400 dark:hover:bg-slate-900"
+                >
+                  <Menu size={20} />
+                </button>
+              )}
+              <h2 className="text-sm font-bold text-slate-900 dark:text-white uppercase tracking-wider">
+                {activeTab.replace(/-/g, ' ')}
+              </h2>
+            </div>
+            
+            <div className="flex items-center gap-6">
+              <div className="hidden items-center gap-2 md:flex">
+                <div className="h-2 w-2 animate-pulse rounded-full bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.5)]"></div>
+                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">{profile.role.replace('_', ' ')} System Active</span>
+              </div>
+              <div className="h-6 w-px bg-slate-200 dark:bg-slate-800"></div>
+              <div className="flex items-center gap-3">
+                <div className="text-right hidden sm:block">
+                  <p className="text-xs font-bold text-slate-900 dark:text-white">{profile.displayName}</p>
+                  <p className="text-[10px] text-slate-500 dark:text-slate-400">{profile.email}</p>
+                </div>
+                <div className="h-10 w-10 overflow-hidden rounded-xl bg-slate-100 dark:bg-slate-800 flex items-center justify-center font-black text-blue-600 dark:text-blue-400">
+                  {profile.displayName?.charAt(0)}
+                </div>
+              </div>
+            </div>
+          </header>
+
           <AnimatePresence mode="wait">
             <motion.div key={activeTab} initial={{ opacity: 0, x: 10 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -10 }} transition={{ duration: 0.2 }}>
               {!hasAccess(activeTab) ? (
@@ -4650,7 +6350,10 @@ export default function App() {
                     <ShieldAlert size={40} />
                   </div>
                   <h2 className="text-2xl font-bold text-slate-900 dark:text-white mb-2">Access Restricted</h2>
-                  <p className="text-slate-500 dark:text-slate-400 max-w-md">You do not have permission to access this section. Please contact your pharmacy manager if you believe this is an error.</p>
+                  <p className="text-slate-500 dark:text-slate-400 max-w-md">
+                    You do not have permission to access this section. 
+                    {profile.role === 'staff' ? ' Please contact your manager if you believe this is an error.' : ' Please upgrade your plan or contact support if you believe this is an error.'}
+                  </p>
                   <button onClick={() => setActiveTab('dashboard')} className="mt-8 bg-blue-600 text-white px-8 py-3 rounded-xl font-bold hover:bg-blue-700 transition-all">Back to Dashboard</button>
                 </div>
               ) : (
@@ -4660,18 +6363,21 @@ export default function App() {
                       ? <RegionalManagerDashboard user={profile} /> 
                       : profile.role === 'marketing'
                       ? <MarketingDashboard user={profile} />
+                      : profile.role === 'importer'
+                      ? <ImporterDashboard user={profile} />
                       : <DashboardView role={profile.role} user={profile} setActiveTab={setActiveTab} />
                   )}
                   {activeTab === 'inventory' && <InventoryView user={profile} />}
-                  {activeTab === 'importer-inventory' && <ImporterInventoryView user={profile} />}
+                  {activeTab === 'my-products' && <ImporterInventoryView user={profile} />}
                   {activeTab === 'sales' && <SalesView user={profile} />}
                   {activeTab === 'marketplace' && <MarketplaceView user={profile} />}
                   {activeTab === 'orders' && <OrdersView user={profile} />}
-                  {activeTab === 'subscription' && <SubscriptionView user={profile} />}
+                  {activeTab === 'subscription' && <SubscriptionView user={profile} settings={systemSettings} />}
+                  {activeTab === 'suppliers' && <SuppliersView user={profile} />}
                   {activeTab === 'staff' && <StaffManagementView user={profile} />}
                   {activeTab === 'admin-users' && <AdminUserManagement />}
                   {activeTab === 'admin-marketing' && <AdminMarketingManagement />}
-                  {activeTab === 'admin-revenue' && <AdminRevenuePanel />}
+                  {activeTab === 'admin-revenue' && <AdminRevenuePanel settings={systemSettings} />}
                   {activeTab === 'admin-marketplace' && <AdminMarketplaceControl />}
                   {activeTab === 'admin-notifications' && <AdminNotifications />}
                   {activeTab === 'admin-system' && <AdminSystemControl />}

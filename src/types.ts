@@ -9,10 +9,15 @@ export interface UserProfile {
   country?: string;
   region?: string;
   city?: string;
+  address?: string;
+  latitude?: number;
+  longitude?: number;
   pharmacyName?: string;
   importerName?: string;
   subscriptionType?: 'basic' | 'standard' | 'premium';
-  subscriptionStatus?: 'active' | 'expired';
+  subscriptionStatus?: 'active' | 'expired' | 'past_due';
+  subscriptionExpiryDate?: number;
+  lastSubscriptionPaymentDate?: number;
   pendingSubscriptionType?: 'basic' | 'standard' | 'premium';
   verificationStatus: VerificationStatus;
   verificationDocs?: string[]; // URLs to uploaded files
@@ -21,13 +26,23 @@ export interface UserProfile {
   password?: string;
   staffRole?: string;
   pharmacyId?: string;
+  importerId?: string;
   permissions?: string[];
-  promoCode?: string; // For marketing team
-  referredBy?: string; // Promo code used during signup
+  promoCode?: string; // For marketing team or pharmacy referrals
+  referralCode?: string; // Unique code for pharmacies to invite others
+  referredBy?: string; // Code used during signup
+  referrerUid?: string; // UID of the pharmacy/importer who referred this user
+  referralRewardMonthsEarned?: number; // Total months earned through referrals
   marketingId?: string; // UID of the marketing member who referred this user
   commissionBalance?: number; // For marketing team
   theme?: 'light' | 'dark';
   createdAt: number;
+  deliverySettings?: {
+    isFreeDelivery: boolean;
+    freeDeliveryThreshold?: number;
+    baseFee: number;
+    feePerKm: number;
+  };
 }
 
 export interface Medicine {
@@ -121,6 +136,7 @@ export interface SystemSettings {
     premiumPlanRate: number;
     orderCommissionPercent: number;
   };
+  pharmacyReferralRewardMonths: number;
   maxMedicinesPerPlan: {
     basic: number;
     standard: number;
@@ -130,6 +146,11 @@ export interface SystemSettings {
     marketplace: boolean;
     subscriptions: boolean;
     analytics: boolean;
+  };
+  planPrices: {
+    basic: number;
+    standard: number;
+    premium: number;
   };
   updatedAt: number;
 }

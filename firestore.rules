@@ -1,170 +1,203 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
+    // ===============================================================
+    // Assumed Data Models
+    // ===============================================================
+    // Collection: users
+    // Fields:
+    //   - uid: string (required)
+    //   - role: string (one of: admin, pharmacy, importer, marketing, regional_manager, staff)
+    //   - email: string (email format)
+    //   - displayName: string (required, < 100 chars)
+    //   - country: string (required)
+    //   - verificationStatus: string (pending, approved, rejected)
+    //   - promoCode: string (optional, for marketing role)
+    //   - commissionBalance: number (optional, for marketing role)
+    
+    // ===============================================================
     // Helper Functions
+    // ===============================================================
     function isAuthenticated() {
       return request.auth != null;
     }
+
+    function isVerified() {
+      return isAuthenticated();
+    }
     
+    function getUserData() {
+      return exists(/databases/$(database)/documents/users/$(request.auth.uid)) 
+        ? get(/databases/$(database)/documents/users/$(request.auth.uid)).data 
+        : {};
+    }
+    
+    function getRole() { return getUserData().get('role', 'none'); }
+    function getPharmacyId() { return getUserData().get('pharmacyId', 'none'); }
+    function getImporterId() { return getUserData().get('importerId', 'none'); }
+    function getCountry() { return getUserData().get('country', 'none'); }
+    
+    function isStaff() { return getRole() == 'staff'; }
+    function getParentPharmacyId() { return getUserData().get('pharmacyId', 'none'); }
+    function getParentImporterId() { return getUserData().get('importerId', 'none'); }
+
+    function isAdmin() {
+      return isAuthenticated() && (
+        request.auth.token.email == "andualemtyb@gmail.com" || 
+        request.auth.token.email == "atech2119@gmail.com" ||
+        getRole() == "admin"
+      );
+    }
+
     function isOwner(userId) {
       return isAuthenticated() && request.auth.uid == userId;
     }
-    
-    function isAdmin() {
-      return isAuthenticated() && 
-        ((request.auth.token.email == "andualemtyb@gmail.com" && request.auth.token.email_verified == true) ||
-         (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
-          get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin'));
+
+    function isValidEmail(email) {
+      return email is string && email.matches("^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$");
     }
 
-    function isApproved() {
-      return isAuthenticated() && 
-        exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
-        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.verificationStatus == 'approved';
+    // ===============================================================
+    // Domain Validators
+    // ===============================================================
+    function isValidUser(data) {
+      return data.role in ['admin', 'pharmacy', 'importer', 'marketing', 'regional_manager', 'staff'] &&
+             isValidEmail(data.email) &&
+             data.displayName is string && data.displayName.size() < 100 &&
+             (!('country' in data) || (data.country is string && data.country.size() < 50));
     }
 
-    function isPharmacy() {
-      return isAuthenticated() && 
-        exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
-        (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'pharmacy' ||
-         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'staff');
-    }
+    // ===============================================================
+    // Rules
+    // ===============================================================
 
-    function getPharmacyId() {
-      let userData = get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
-      return userData.role == 'pharmacy' ? request.auth.uid : userData.pharmacyId;
-    }
-
-    function isImporter() {
-      return isAuthenticated() && 
-        exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
-        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'importer';
-    }
-
-    function isRegionalManager() {
-      return isAuthenticated() && 
-        exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
-        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'regional_manager';
-    }
-
-    function isMarketing() {
-      return isAuthenticated() && 
-        exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
-        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'marketing';
-    }
-
-    function isOwnerReferredByMe(ownerId) {
-      return isMarketing() && 
-        get(/databases/$(database)/documents/users/$(ownerId)).data.marketingId == request.auth.uid;
-    }
-
-    function getUserCountry() {
-      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data.country;
-    }
-
-    // User Profiles
     match /users/{uid} {
-      // PII Protection: Only owner or admin can read the full profile
-      // Added: Pharmacies can read their staff, Regional Managers can read users in their country, Marketing can read their referrals
-      // Added: All authenticated users can read marketing profiles (minimal info)
-      allow read: if isOwner(uid) || isAdmin() || 
-                  (isPharmacy() && resource.data.pharmacyId == request.auth.uid) ||
-                  (isRegionalManager() && resource.data.country == getUserCountry()) ||
-                  (isMarketing() && resource.data.marketingId == request.auth.uid) ||
-                  (resource.data.role == 'marketing') ||
-                  (isAuthenticated() && exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
-                   get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'staff' && 
-                   uid == get(/databases/$(database)/documents/users/$(request.auth.uid)).data.pharmacyId);
-      
-      // Added: Pharmacies can create staff accounts, Admins can create Marketing accounts
-      allow create: if isOwner(uid) || isAdmin() ||
-                    (isAuthenticated() && exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
-                     get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'pharmacy' && 
-                     isApproved() && request.resource.data.role == 'staff' && 
-                     request.resource.data.pharmacyId == request.auth.uid);
-      
-      // Added: Pharmacies can update their staff, Marketing can update their referrals (to "fix" things)
-      // Added: All authenticated users can update marketing commission balance
-      allow update: if isOwner(uid) || isAdmin() ||
-                    (resource.data.role == 'marketing' && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['commissionBalance'])) ||
-                    (isAuthenticated() && exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
-                     get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'pharmacy' && 
-                     resource.data.pharmacyId == request.auth.uid && 
-                     request.resource.data.role == resource.data.role) ||
-                    (isMarketing() && resource.data.marketingId == request.auth.uid);
-
-      // Added: Pharmacies can delete their staff, Marketing can delete their referrals
-      allow delete: if isAdmin() || 
-                    (isAuthenticated() && exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
-                     get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'pharmacy' && 
-                     resource.data.pharmacyId == request.auth.uid) ||
-                    (isMarketing() && resource.data.marketingId == request.auth.uid);
-    }
-
-    // Medicines
-    match /medicines/{medicineId} {
-      allow read: if isAuthenticated();
-      allow create: if isPharmacy() && isApproved() && request.resource.data.pharmacyId == getPharmacyId();
-      allow update: if (isPharmacy() && isApproved() && resource.data.pharmacyId == getPharmacyId()) ||
-                    isOwnerReferredByMe(resource.data.pharmacyId);
-      allow delete: if (isPharmacy() && isApproved() && resource.data.pharmacyId == getPharmacyId()) ||
-                    isOwnerReferredByMe(resource.data.pharmacyId);
-    }
-
-    // Sales
-    match /sales/{saleId} {
-      allow read: if isAuthenticated();
-      allow create: if isPharmacy() && isApproved() && request.resource.data.pharmacyId == getPharmacyId();
-      allow update: if isAdmin() || isOwnerReferredByMe(resource.data.pharmacyId);
-      allow delete: if isAdmin() || isOwnerReferredByMe(resource.data.pharmacyId);
-    }
-
-    // Marketplace Products
-    match /products/{productId} {
-      allow read: if isAuthenticated();
-      allow create: if isImporter() && isApproved() && request.resource.data.importerId == request.auth.uid;
-      allow update: if (isImporter() && isApproved() && resource.data.importerId == request.auth.uid) ||
-                    isOwnerReferredByMe(resource.data.importerId);
-      allow delete: if (isImporter() && isApproved() && resource.data.importerId == request.auth.uid) ||
-                    isOwnerReferredByMe(resource.data.importerId);
-    }
-
-    // B2B Orders
-    match /orders/{orderId} {
       allow read: if isAuthenticated() && (
-        getPharmacyId() == resource.data.pharmacyId || 
-        request.auth.uid == resource.data.importerId || 
+        isOwner(uid) || 
         isAdmin() || 
-        (isRegionalManager() && getUserCountry() == resource.data.country) ||
-        isOwnerReferredByMe(resource.data.pharmacyId) ||
-        isOwnerReferredByMe(resource.data.importerId)
+        // Staff of the same parent pharmacy or importer group
+        uid == getPharmacyId() ||
+        uid == getImporterId() ||
+        // Regional managers can read users in their country
+        (getRole() == 'regional_manager' && resource.data.get('country', '') == getCountry()) ||
+        // Marketing users can read their referrals
+        (getRole() == 'marketing' && resource.data.get('marketingId', '') == request.auth.uid) ||
+        // Allow looking up any user by referralCode or promoCode during signup/referrals
+        (resource.data.get('referralCode', '') != '') ||
+        // Staff of the same pharmacy or importer group
+        (resource.data.get('pharmacyId', 'none') != 'none' && (resource.data.pharmacyId == request.auth.uid || resource.data.pharmacyId == getPharmacyId())) ||
+        (resource.data.get('importerId', 'none') != 'none' && (resource.data.importerId == request.auth.uid || resource.data.importerId == getImporterId())) ||
+        // Suppliers directory: Approved importers are readable by authenticated users
+        (resource.data.get('role', '') == 'importer' && resource.data.get('verificationStatus', '') == 'approved') ||
+        // Allow reading marketing users (for promo code lookups)
+        (resource.data.get('role', '') == 'marketing')
       );
-      allow create: if isPharmacy() && isApproved() && request.resource.data.pharmacyId == getPharmacyId();
-      allow update: if isAuthenticated() && (
-        request.auth.uid == resource.data.importerId || 
-        (getPharmacyId() == resource.data.pharmacyId && request.resource.data.status == 'cancelled') ||
+      
+      allow create: if isVerified() && (
+        (isOwner(uid) && isValidUser(request.resource.data) && request.resource.data.role != 'admin' && request.resource.data.verificationStatus == 'pending') ||
         isAdmin() ||
-        isOwnerReferredByMe(resource.data.pharmacyId) ||
-        isOwnerReferredByMe(resource.data.importerId)
+        // Pharmacy/Importer/Staff of same group creating a staff member
+        (getRole() in ['pharmacy', 'importer', 'staff'] && request.resource.data.role == 'staff' && (request.resource.data.pharmacyId == request.auth.uid || request.resource.data.importerId == request.auth.uid || request.resource.data.pharmacyId == getPharmacyId() || request.resource.data.importerId == getImporterId())) ||
+        // Marketing user creating marketing partner/referral users
+        (getRole() == 'marketing' && request.resource.data.role == 'marketing')
+      );
+                    
+      allow update: if isAuthenticated() && (
+        (isOwner(uid) && isVerified() && isValidUser(request.resource.data) && 
+         request.resource.data.role == resource.data.role && 
+         request.resource.data.verificationStatus == resource.data.verificationStatus &&
+         (!('createdAt' in resource.data) || request.resource.data.createdAt == resource.data.createdAt)) ||
+        isAdmin() ||
+        // Parents/Managers of the staff group updating a staff member
+        (getRole() in ['pharmacy', 'importer', 'staff'] && resource.data.role == 'staff' && (resource.data.pharmacyId == request.auth.uid || resource.data.importerId == request.auth.uid || resource.data.pharmacyId == getPharmacyId() || resource.data.importerId == getImporterId())) ||
+        // Marketing user updating their marketing sub-users
+        (getRole() == 'marketing' && resource.data.role == 'marketing')
+      );
+      
+      allow delete: if isAdmin() || (
+        isAuthenticated() && (
+          // Parents can delete their staff members
+          (getRole() in ['pharmacy', 'importer', 'staff'] && resource.data.role == 'staff' && (resource.data.pharmacyId == request.auth.uid || resource.data.importerId == request.auth.uid || resource.data.pharmacyId == getPharmacyId() || resource.data.importerId == getImporterId()))
+        )
       );
     }
 
-    // System Settings
-    match /system_settings/{docId} {
-      allow read: if isAuthenticated();
+    match /system_settings/{id} {
+      allow read: if true;
       allow write: if isAdmin();
     }
 
-    // Notifications
-    match /notifications/{notificationId} {
+    match /medicines/{id} {
+      allow read: if isAuthenticated() && (
+        isAdmin() || 
+        resource.data.pharmacyId == request.auth.uid || 
+        resource.data.pharmacyId == getPharmacyId()
+      );
+      allow create: if isVerified() && (
+        request.resource.data.pharmacyId == request.auth.uid || 
+        request.resource.data.pharmacyId == getPharmacyId()
+      );
+      allow update: if isVerified() && (
+        isAdmin() || 
+        resource.data.pharmacyId == request.auth.uid || 
+        resource.data.pharmacyId == getPharmacyId()
+      );
+      allow delete: if isAdmin() || (isAuthenticated() && (resource.data.pharmacyId == request.auth.uid || resource.data.pharmacyId == getPharmacyId()));
+    }
+
+    match /sales/{id} {
+      allow read: if isAuthenticated() && (
+        isAdmin() || 
+        resource.data.pharmacyId == request.auth.uid || 
+        resource.data.pharmacyId == getPharmacyId()
+      );
+      allow create: if isVerified() && (
+        request.resource.data.pharmacyId == request.auth.uid || 
+        request.resource.data.pharmacyId == getPharmacyId()
+      );
+      allow update, delete: if isAdmin();
+    }
+
+    match /products/{id} {
       allow read: if isAuthenticated();
+      allow write: if isVerified() && (isAdmin() || getRole() == 'importer' || getRole() == 'staff' && getParentImporterId() != 'none');
+    }
+
+    match /orders/{id} {
+      allow read: if isAuthenticated() && (
+        isAdmin() || 
+        resource.data.pharmacyId == request.auth.uid || 
+        resource.data.importerId == request.auth.uid ||
+        resource.data.marketingId == request.auth.uid ||
+        resource.data.pharmacyId == getPharmacyId() ||
+        resource.data.importerId == getImporterId() ||
+        // Regional managers can read orders in their country
+        (getRole() == 'regional_manager' && resource.data.get('country', '') == getCountry())
+      );
+      allow create: if isVerified();
+      allow update: if isVerified() && (
+        isAdmin() || 
+        resource.data.pharmacyId == request.auth.uid || 
+        resource.data.importerId == request.auth.uid ||
+        resource.data.pharmacyId == getPharmacyId() ||
+        resource.data.importerId == getImporterId() ||
+        // Regional managers can update orders in their country
+        (getRole() == 'regional_manager' && resource.data.get('country', '') == getCountry())
+      );
+      allow delete: if isAdmin();
+    }
+
+    match /notifications/{id} {
+      allow read: if isAuthenticated() && (resource.data.userId == request.auth.uid || isAdmin());
       allow write: if isAdmin();
     }
 
-    // Audit Logs
-    match /audit_logs/{logId} {
-      allow read: if isAdmin();
-      allow create: if isAuthenticated();
+    match /audit_logs/{id} {
+      allow read, write: if isAdmin();
+    }
+
+    match /{path=**} {
+      allow read, write: if isAdmin();
     }
   }
 }
