@@ -30,13 +30,16 @@
         "verificationStatus": { "type": "string", "enum": ["pending", "approved", "rejected"] },
         "verificationDocs": { "type": "array", "items": { "type": "string" } },
         "rejectionReason": { "type": "string" },
+        "adminRating": { "type": "number", "description": "Rating score assigned by super admins (1-5)" },
+        "adminFeedback": { "type": "string", "description": "Performance review and feedback comments by super admins" },
+        "ratingUpdatedAt": { "type": "number", "description": "Timestamp of when the super admin last updated the rating" },
         "createdAt": { "type": "number" }
       },
       "required": ["uid", "email", "role", "verificationStatus", "createdAt"]
     },
-    "Medicine": {
-      "title": "Medicine",
-      "description": "Inventory items for a pharmacy.",
+    "InventoryProduct": {
+      "title": "Inventory Product",
+      "description": "Inventory products and medical supplies for a pharmacy or hospital.",
       "type": "object",
       "properties": {
         "id": { "type": "string" },
@@ -50,9 +53,41 @@
         "supplier": { "type": "string" },
         "pharmacyId": { "type": "string" },
         "lowStockThreshold": { "type": "number" },
-        "createdAt": { "type": "number" }
+        "createdAt": { "type": "number" },
+        "genericName": { "type": "string" },
+        "countryOfOrigin": { "type": "string" },
+        "purchaseUnit": { "type": "string" },
+        "dispensingUnit": { "type": "string" },
+        "conversionFactor": { "type": "number" }
       },
       "required": ["id", "name", "price", "quantity", "pharmacyId", "createdAt"]
+    },
+    "BinCardEntry": {
+      "title": "Bin Card Entry",
+      "description": "Bin Card Ledger details tracking medicine movements and stock transactions.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "pharmacyId": { "type": "string" },
+        "branchId": { "type": "string" },
+        "productId": { "type": "string" },
+        "productName": { "type": "string" },
+        "genericName": { "type": "string" },
+        "transactionType": { "type": "string", "enum": ["Purchase", "Sale", "Transfer In", "Transfer Out", "Return", "Adjustment", "Loss/Damage"] },
+        "referenceNumber": { "type": "string" },
+        "quantityIn": { "type": "number" },
+        "quantityOut": { "type": "number" },
+        "balance": { "type": "number" },
+        "user": { "type": "string" },
+        "branch": { "type": "string" },
+        "product": { "type": "string" },
+        "countryOfOrigin": { "type": "string" },
+        "purchaseUnit": { "type": "string" },
+        "dispensingUnit": { "type": "string" },
+        "conversionFactor": { "type": "number" },
+        "createdAt": { "type": "number" }
+      },
+      "required": ["id", "pharmacyId", "branchId", "productId", "transactionType", "quantityIn", "quantityOut", "balance", "createdAt"]
     },
     "Sale": {
       "title": "Sale",
@@ -127,10 +162,161 @@
             "orderCommissionPercent": { "type": "number" }
           }
         },
-        "maxMedicinesPerPlan": { "type": "object" },
+        "maxProductsPerPlan": { "type": "object" },
         "featuresEnabled": { "type": "object" },
         "updatedAt": { "type": "number" }
       }
+    },
+    "Branch": {
+      "title": "Branch",
+      "description": "Information about a specific pharmacy branch location.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "pharmacyId": { "type": "string" },
+        "name": { "type": "string" },
+        "location": { "type": "string" },
+        "phone": { "type": "string" },
+        "createdAt": { "type": "number" }
+      },
+      "required": ["id", "pharmacyId", "name", "location", "createdAt"]
+    },
+    "StockTransfer": {
+      "title": "Stock Transfer",
+      "description": "Stock transfer record between pharmacy branches.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "pharmacyId": { "type": "string" },
+        "fromBranchId": { "type": "string" },
+        "fromBranchName": { "type": "string" },
+        "toBranchId": { "type": "string" },
+        "toBranchName": { "type": "string" },
+        "productId": { "type": "string" },
+        "productName": { "type": "string" },
+        "batchNumber": { "type": "string" },
+        "quantity": { "type": "number" },
+        "status": { "type": "string", "enum": ["pending", "completed", "cancelled"] },
+        "createdAt": { "type": "number" }
+      },
+      "required": ["id", "pharmacyId", "fromBranchId", "toBranchId", "productId", "quantity", "status", "createdAt"]
+    },
+    "Warehouse": {
+      "title": "Warehouse",
+      "description": "Information about a specific pharmacy warehouse.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "pharmacyId": { "type": "string" },
+        "name": { "type": "string" },
+        "location": { "type": "string" },
+        "phone": { "type": "string" },
+        "managerId": { "type": "string" },
+        "managerName": { "type": "string" },
+        "createdAt": { "type": "number" }
+      },
+      "required": ["id", "pharmacyId", "name", "location", "createdAt"]
+    },
+    "WarehouseTransaction": {
+      "title": "Warehouse Transaction",
+      "description": "Records stock receiving and dispatch movements for warehouses.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "pharmacyId": { "type": "string" },
+        "type": { "type": "string", "enum": ["receiving", "dispatch", "internal_transfer_out", "internal_transfer_in", "dispatch_to_branch"] },
+        "productId": { "type": "string" },
+        "productName": { "type": "string" },
+        "batchNumber": { "type": "string" },
+        "expiryDate": { "type": "string" },
+        "quantity": { "type": "number" },
+        "sourceId": { "type": "string" },
+        "sourceName": { "type": "string" },
+        "destinationId": { "type": "string" },
+        "destinationName": { "type": "string" },
+        "costPrice": { "type": "number" },
+        "sellingPrice": { "type": "number" },
+        "notes": { "type": "string" },
+        "createdBy": { "type": "string" },
+        "createdAt": { "type": "number" }
+      },
+      "required": ["id", "pharmacyId", "type", "productId", "productName", "quantity", "sourceId", "destinationId", "createdAt"]
+    },
+    "PurchaseOrder": {
+      "title": "Purchase Order",
+      "description": "Enterprise purchase orders representing purchase requests, approvals, ordered state, goods receiving, and invoice matching.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "pharmacyId": { "type": "string" },
+        "pharmacyName": { "type": "string" },
+        "createdById": { "type": "string" },
+        "createdByName": { "type": "string" },
+        "createdAt": { "type": "number" },
+        "updatedAt": { "type": "number" },
+        "status": { "type": "string", "enum": ["draft", "pending_approval", "approved", "rejected", "ordered", "received_part", "received_full", "completed"] },
+        "supplierId": { "type": "string" },
+        "supplierName": { "type": "string" },
+        "supplierType": { "type": "string", "enum": ["importer", "local"] },
+        "items": { "type": "array" },
+        "totalAmount": { "type": "number" },
+        "branchId": { "type": "string" },
+        "warehouseId": { "type": "string" },
+        "approvedById": { "type": "string" },
+        "approvedByName": { "type": "string" },
+        "approvedAt": { "type": "number" },
+        "notes": { "type": "string" },
+        "invoiceNumber": { "type": "string" },
+        "invoiceAmount": { "type": "number" },
+        "invoiceMatched": { "type": "string", "enum": ["pending", "matched", "mismatched"] },
+        "invoiceNotes": { "type": "string" }
+      },
+      "required": ["id", "pharmacyId", "createdById", "status", "items", "totalAmount", "createdAt"]
+    },
+    "Supplier": {
+      "title": "Supplier",
+      "description": "Custom registered local supplier profile for contact, license, performance, and ratings tracking.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "pharmacyId": { "type": "string" },
+        "name": { "type": "string" },
+        "contactName": { "type": "string" },
+        "email": { "type": "string" },
+        "phone": { "type": "string" },
+        "address": { "type": "string" },
+        "city": { "type": "string" },
+        "country": { "type": "string" },
+        "licenseNumber": { "type": "string" },
+        "licenseExpiry": { "type": "string" },
+        "licenseAuthority": { "type": "string" },
+        "licenseStatus": { "type": "string", "enum": ["active", "expired", "pending", "invalid"] },
+        "rating": { "type": "number" },
+        "ratingsCount": { "type": "number" },
+        "ratingsList": { "type": "array" },
+        "onTimeDeliveryRate": { "type": "number" },
+        "qualityComplianceRate": { "type": "number" },
+        "leadTimeDays": { "type": "number" },
+        "createdAt": { "type": "number" },
+        "updatedAt": { "type": "number" }
+      },
+      "required": ["id", "pharmacyId", "name", "createdAt"]
+    },
+    "ExpirySettings": {
+      "title": "Expiry Settings",
+      "description": "System settings for automated email alert triggers and notification configurations for medicine expiry management.",
+      "type": "object",
+      "properties": {
+        "pharmacyId": { "type": "string" },
+        "notify30": { "type": "boolean" },
+        "notify60": { "type": "boolean" },
+        "notify90": { "type": "boolean" },
+        "recipientEmails": { "type": "array", "items": { "type": "string" } },
+        "lastSentAt": { "type": "number" },
+        "enabled": { "type": "boolean" },
+        "updatedAt": { "type": "number" }
+      },
+      "required": ["pharmacyId"]
     }
   },
   "firestore": {
@@ -139,8 +325,24 @@
       "description": "User profile documents."
     },
     "/medicines/{medicineId}": {
-      "schema": "Medicine",
-      "description": "Medicine inventory documents."
+      "schema": "InventoryProduct",
+      "description": "Inventory product documents."
+    },
+    "/branches/{branchId}": {
+      "schema": "Branch",
+      "description": "Pharmacy branch documents."
+    },
+    "/warehouses/{warehouseId}": {
+      "schema": "Warehouse",
+      "description": "Pharmacy warehouse documents."
+    },
+    "/warehouse_transactions/{transactionId}": {
+      "schema": "WarehouseTransaction",
+      "description": "Warehouse stock receiving and dispatch transaction records."
+    },
+    "/transfers/{transferId}": {
+      "schema": "StockTransfer",
+      "description": "Stock transfer records between branches."
     },
     "/sales/{saleId}": {
       "schema": "Sale",
@@ -154,6 +356,18 @@
       "schema": "Order",
       "description": "B2B order documents."
     },
+    "/purchase_orders/{id}": {
+      "schema": "PurchaseOrder",
+      "description": "Pharmacy enterprise purchase workflow requests and orders."
+    },
+    "/suppliers/{id}": {
+      "schema": "Supplier",
+      "description": "Pharmacy localized external supplier contacts and profiles."
+    },
+    "/expiry_settings/{id}": {
+      "schema": "ExpirySettings",
+      "description": "Settings for automatic medicine expiry email configuration."
+    },
     "/system_settings/main": {
       "schema": "SystemSettings",
       "description": "Global system configuration."
@@ -165,6 +379,10 @@
     "/audit_logs/{logId}": {
       "schema": "AuditLog",
       "description": "Security and activity logs."
+    },
+    "/inventory_movements/{logId}": {
+      "schema": "BinCardEntry",
+      "description": "Medicine item transaction logs and ledger movements."
     }
   }
 }
