@@ -5,6 +5,7 @@ import {
   where, 
   orderBy, 
   limit, 
+  startAfter,
   onSnapshot, 
   doc, 
   updateDoc, 
@@ -27,7 +28,9 @@ import {
   getCurrencySymbol,
   getCurrencyName,
   SaaSInvoice,
-  SubscriptionHistoryEntry
+  SubscriptionHistoryEntry,
+  Sale,
+  SaleItem
 } from '../types';
 import { FEATURES_LIST, DEFAULT_PLAN_FEATURES } from '../lib/featureGate';
 import { syncPharmacyBillingAndInvoices } from '../lib/billingEngine';
@@ -66,7 +69,15 @@ import {
   X, 
   Layers,
   Trash2,
-  Sparkles
+  Sparkles,
+  BarChart3,
+  ShoppingBag,
+  Package,
+  Calendar,
+  ArrowUpRight,
+  Download,
+  ArrowUpDown,
+  Store
 } from 'lucide-react';
 import { 
   ResponsiveContainer, 
@@ -101,7 +112,7 @@ interface SupportTicket {
   createdAt: number;
 }
 
-// 15 Sub tabs
+// 16 Sub tabs
 type SuperAdminTab = 
   | 'overview' 
   | 'organizations' 
@@ -112,6 +123,7 @@ type SuperAdminTab =
   | 'audit' 
   | 'secops' 
   | 'revenue' 
+  | 'market-intelligence'
   | 'health' 
   | 'support' 
   | 'communication' 
@@ -225,6 +237,17 @@ export const SuperAdminConsole = ({
     targetRegion: '',
     targetEmail: ''
   });
+
+  // Market Intelligence State Variables
+  const [marketDateRange, setMarketDateRange] = useState<'today' | '7d' | '30d' | '90d' | 'all' | 'custom'>('30d');
+  const [customStartDate, setCustomStartDate] = useState<string>('');
+  const [customEndDate, setCustomEndDate] = useState<string>('');
+  const [marketCategoryFilter, setMarketCategoryFilter] = useState<string>('all');
+  const [marketSearchQuery, setMarketSearchQuery] = useState<string>('');
+  const [marketSortBy, setMarketSortBy] = useState<'quantity' | 'revenue' | 'frequency' | 'pharmacies'>('quantity');
+  const [marketSalesLoading, setMarketSalesLoading] = useState<boolean>(false);
+  const [marketSales, setMarketSales] = useState<Sale[]>([]);
+  const [medicineMetadataMap, setMedicineMetadataMap] = useState<Record<string, { category?: string; genericName?: string; countryOfOrigin?: string }>>({});
 
   // Dynamic subscription customized manager state variables
   const [selectedEditPlan, setSelectedEditPlan] = useState<'standard' | 'premium'>('standard');
@@ -428,6 +451,300 @@ export const SuperAdminConsole = ({
     } catch (e) {
       console.error("Failed to append audit log", e);
     }
+  };
+
+  // On-demand bounded fetch for Network Market Intelligence
+  const loadMarketIntelligenceSales = async (
+    range: 'today' | '7d' | '30d' | '90d' | 'all' | 'custom',
+    customStart?: string,
+    customEnd?: string
+  ) => {
+    setMarketSalesLoading(true);
+    try {
+      const now = Date.now();
+      let startTimestamp = 0;
+      let endTimestamp = now;
+
+      if (range === 'today') {
+        const d = new Date();
+        d.setHours(0, 0, 0, 0);
+        startTimestamp = d.getTime();
+      } else if (range === '7d') {
+        startTimestamp = now - 7 * 24 * 60 * 60 * 1000;
+      } else if (range === '30d') {
+        startTimestamp = now - 30 * 24 * 60 * 60 * 1000;
+      } else if (range === '90d') {
+        startTimestamp = now - 90 * 24 * 60 * 60 * 1000;
+      } else if (range === 'custom') {
+        if (customStart) {
+          startTimestamp = new Date(customStart).getTime();
+        }
+        if (customEnd) {
+          const ed = new Date(customEnd);
+          ed.setHours(23, 59, 59, 999);
+          endTimestamp = ed.getTime();
+        }
+      }
+
+      let allLoaded: Sale[] = [];
+      let lastVisible: any = null;
+      let hasMore = true;
+      const BATCH_SIZE = 1000;
+      // Controlled pagination loop: up to 10 batches (10,000 sales) to represent full historical analytics without memory or quota exhaustion
+      const MAX_BATCHES = 10;
+      let batchCount = 0;
+
+      while (hasMore && batchCount < MAX_BATCHES) {
+        let baseConstraints: any[] = [];
+        if (startTimestamp > 0) {
+          baseConstraints = [
+            where('createdAt', '>=', startTimestamp),
+            where('createdAt', '<=', endTimestamp),
+            orderBy('createdAt', 'desc'),
+            limit(BATCH_SIZE)
+          ];
+        } else {
+          baseConstraints = [
+            orderBy('createdAt', 'desc'),
+            limit(BATCH_SIZE)
+          ];
+        }
+
+        if (lastVisible) {
+          baseConstraints.push(startAfter(lastVisible));
+        }
+
+        const salesQuery = query(collection(db, 'sales'), ...baseConstraints);
+        const snapshot = await getDocs(salesQuery);
+
+        if (snapshot.empty) {
+          hasMore = false;
+          break;
+        }
+
+        const batchDocs = snapshot.docs.map(d => ({ id: d.id, ...(d.data() as any) } as Sale));
+        allLoaded = allLoaded.concat(batchDocs);
+        lastVisible = snapshot.docs[snapshot.docs.length - 1];
+        batchCount++;
+
+        if (snapshot.docs.length < BATCH_SIZE) {
+          hasMore = false;
+        }
+      }
+
+      setMarketSales(allLoaded);
+
+      // Metadata dictionary build for medicine categories and generic names
+      if (Object.keys(medicineMetadataMap).length === 0) {
+        const medsSnap = await getDocs(query(collection(db, 'medicines'), limit(1000)));
+        const meta: Record<string, { category?: string; genericName?: string; countryOfOrigin?: string }> = {};
+        medsSnap.docs.forEach(docSnap => {
+          const data = docSnap.data();
+          if (data.name) {
+            const key = data.name.trim().toLowerCase();
+            if (!meta[key]) {
+              meta[key] = {
+                category: data.category || 'General Pharma',
+                genericName: data.genericName || '',
+                countryOfOrigin: data.countryOfOrigin || ''
+              };
+            }
+          }
+        });
+        setMedicineMetadataMap(meta);
+      }
+    } catch (err) {
+      console.error('Failed to load market sales intelligence', err);
+      toast.error('Unable to fetch market sales data.');
+    } finally {
+      setMarketSalesLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (activeTab === 'market-intelligence' || activeTab === 'overview') {
+      loadMarketIntelligenceSales(marketDateRange, customStartDate, customEndDate);
+    }
+  }, [activeTab, marketDateRange]);
+
+  // Aggregated Product Sales Metrics
+  const productMetrics = React.useMemo(() => {
+    const map = new Map<string, {
+      productName: string;
+      genericName: string;
+      category: string;
+      totalQuantitySold: number;
+      totalRevenue: number;
+      transactionCount: number;
+      uniquePharmacies: Set<string>;
+      lastSaleDate: number;
+      countryOfOrigin?: string;
+    }>();
+
+    marketSales.forEach(sale => {
+      const pId = sale.pharmacyId || 'unknown_pharma';
+      if (!Array.isArray(sale.items)) return;
+
+      sale.items.forEach(item => {
+        if (!item || !item.name) return;
+        const normalizedName = item.name.trim();
+        const lookupKey = normalizedName.toLowerCase();
+        const meta = medicineMetadataMap[lookupKey];
+
+        const existing = map.get(normalizedName) || {
+          productName: normalizedName,
+          genericName: meta?.genericName || '',
+          category: meta?.category || 'General Pharma',
+          totalQuantitySold: 0,
+          totalRevenue: 0,
+          transactionCount: 0,
+          uniquePharmacies: new Set<string>(),
+          lastSaleDate: 0,
+          countryOfOrigin: meta?.countryOfOrigin || ''
+        };
+
+        const qty = Number(item.quantity) || 0;
+        const itemTotal = Number(item.total) || (qty * (Number(item.price) || 0));
+
+        existing.totalQuantitySold += qty;
+        existing.totalRevenue += itemTotal;
+        existing.transactionCount += 1;
+        existing.uniquePharmacies.add(pId);
+        existing.lastSaleDate = Math.max(existing.lastSaleDate, sale.createdAt || 0);
+
+        map.set(normalizedName, existing);
+      });
+    });
+
+    return Array.from(map.values()).map(p => ({
+      ...p,
+      uniquePharmacyCount: p.uniquePharmacies.size,
+      averagePrice: p.totalQuantitySold > 0 ? (p.totalRevenue / p.totalQuantitySold) : 0
+    }));
+  }, [marketSales, medicineMetadataMap]);
+
+  // Available categories list
+  const marketCategories = React.useMemo(() => {
+    const cats = new Set<string>();
+    productMetrics.forEach(p => {
+      if (p.category) cats.add(p.category);
+    });
+    return Array.from(cats).sort();
+  }, [productMetrics]);
+
+  // Filtered & Sorted Product Leaderboard
+  const filteredProducts = React.useMemo(() => {
+    return productMetrics
+      .filter(p => {
+        const matchesCategory = marketCategoryFilter === 'all' || p.category === marketCategoryFilter;
+        const searchLower = marketSearchQuery.toLowerCase().trim();
+        const matchesSearch = !searchLower || 
+          p.productName.toLowerCase().includes(searchLower) || 
+          p.genericName.toLowerCase().includes(searchLower) ||
+          p.category.toLowerCase().includes(searchLower);
+        return matchesCategory && matchesSearch;
+      })
+      .sort((a, b) => {
+        if (marketSortBy === 'revenue') return b.totalRevenue - a.totalRevenue;
+        if (marketSortBy === 'frequency') return b.transactionCount - a.transactionCount;
+        if (marketSortBy === 'pharmacies') return b.uniquePharmacyCount - a.uniquePharmacyCount;
+        return b.totalQuantitySold - a.totalQuantitySold;
+      });
+  }, [productMetrics, marketCategoryFilter, marketSearchQuery, marketSortBy]);
+
+  // Overall KPIs
+  const totalMarketQuantity = React.useMemo(() => {
+    return productMetrics.reduce((sum, p) => sum + p.totalQuantitySold, 0);
+  }, [productMetrics]);
+
+  const totalMarketRevenue = React.useMemo(() => {
+    return productMetrics.reduce((sum, p) => sum + p.totalRevenue, 0);
+  }, [productMetrics]);
+
+  const activeSellingPharmaciesCount = React.useMemo(() => {
+    const pharms = new Set<string>();
+    marketSales.forEach(s => {
+      if (s.pharmacyId) pharms.add(s.pharmacyId);
+    });
+    return pharms.size;
+  }, [marketSales]);
+
+  // Category Distribution for PieChart
+  const categoryDistributionData = React.useMemo(() => {
+    const catMap: Record<string, { name: string; quantity: number; revenue: number }> = {};
+    productMetrics.forEach(p => {
+      const cat = p.category || 'General Pharma';
+      if (!catMap[cat]) {
+        catMap[cat] = { name: cat, quantity: 0, revenue: 0 };
+      }
+      catMap[cat].quantity += p.totalQuantitySold;
+      catMap[cat].revenue += p.totalRevenue;
+    });
+    return Object.values(catMap).sort((a, b) => b.quantity - a.quantity).slice(0, 6);
+  }, [productMetrics]);
+
+  // Trend Data for AreaChart
+  const salesTrendsData = React.useMemo(() => {
+    const dayMap: Record<string, { dateStr: string; timestamp: number; quantity: number; revenue: number }> = {};
+    
+    marketSales.forEach(sale => {
+      if (!sale.createdAt) return;
+      const d = new Date(sale.createdAt);
+      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+      const label = `${d.getMonth() + 1}/${d.getDate()}`;
+      if (!dayMap[key]) {
+        dayMap[key] = { dateStr: label, timestamp: sale.createdAt, quantity: 0, revenue: 0 };
+      }
+      let saleQty = 0;
+      let saleRev = 0;
+      if (Array.isArray(sale.items)) {
+        sale.items.forEach(item => {
+          const q = Number(item.quantity) || 0;
+          saleQty += q;
+          saleRev += Number(item.total) || (q * (Number(item.price) || 0));
+        });
+      }
+      dayMap[key].quantity += saleQty;
+      dayMap[key].revenue += saleRev;
+    });
+
+    return Object.entries(dayMap)
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([, v]) => v)
+      .slice(-14);
+  }, [marketSales]);
+
+  const CATEGORY_COLORS = ['#2563EB', '#10B981', '#F59E0B', '#8B5CF6', '#EC4899', '#06B6D4', '#64748B'];
+
+  const exportMarketIntelligenceCSV = () => {
+    if (filteredProducts.length === 0) {
+      toast.error('No product sales data available to export.');
+      return;
+    }
+    const headers = ['Rank', 'Product Name', 'Generic Name', 'Category', 'Units Sold', 'Total Revenue (ETB)', 'Active Pharmacies Dispensing', 'Sales Frequency (# of Txns)', 'Avg Unit Price (ETB)', 'Last Sale Date'];
+    const rows = filteredProducts.map((p, idx) => [
+      idx + 1,
+      `"${p.productName.replace(/"/g, '""')}"`,
+      `"${(p.genericName || '').replace(/"/g, '""')}"`,
+      `"${p.category.replace(/"/g, '""')}"`,
+      p.totalQuantitySold,
+      p.totalRevenue.toFixed(2),
+      p.uniquePharmacyCount,
+      p.transactionCount,
+      p.averagePrice.toFixed(2),
+      p.lastSaleDate ? new Date(p.lastSaleDate).toLocaleDateString() : 'N/A'
+    ]);
+
+    const csvContent = 'data:text/csv;charset=utf-8,' + [headers.join(','), ...rows.map(e => e.join(','))].join('\n');
+    const encodedUri = encodeURI(csvContent);
+    const link = document.createElement('a');
+    link.setAttribute('href', encodedUri);
+    link.setAttribute('download', `atech_market_intelligence_${marketDateRange}_${new Date().toISOString().slice(0, 10)}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    toast.success('Market Intelligence CSV exported!');
+    createAuditLog('MARKET_INTELLIGENCE_EXPORT', `Exported market sales intelligence report for period: ${marketDateRange}`);
   };
 
   const handleToggleInvoiceStatus = async (invoiceId: string, currentStatus: 'pending' | 'paid') => {
@@ -1427,6 +1744,7 @@ export const SuperAdminConsole = ({
     { id: 'audit', label: 'Audit Log Desk', icon: FileText },
     { id: 'secops', label: 'Security (SOC)', icon: ShieldAlert },
     { id: 'revenue', label: 'Revenue Analytics', icon: TrendingUp },
+    { id: 'market-intelligence', label: 'Market & Product Intelligence', icon: BarChart3 },
     { id: 'health', label: 'System Vitals', icon: Activity },
     { id: 'communication', label: 'Broadcaster', icon: Megaphone },
     { id: 'distributor', label: 'Distributor Node', icon: ShieldCheck },
@@ -1560,6 +1878,26 @@ export const SuperAdminConsole = ({
                         </div>
                         <div className="text-[9px] text-slate-400 mt-2">
                           <span>Across {orders.length} bulk B2B purchase cycles</span>
+                        </div>
+                      </div>
+
+                      <div 
+                        onClick={() => setActiveTab('market-intelligence')}
+                        className="bg-slate-50 dark:bg-slate-800/40 p-5 rounded-2xl border border-slate-100 dark:border-slate-800 hover:border-blue-500/50 cursor-pointer transition-all group"
+                      >
+                        <span className="text-[10px] font-bold text-slate-400 uppercase flex items-center justify-between">
+                          <span className="flex items-center gap-1">
+                            <BarChart3 className="w-3.5 h-3.5 text-blue-500" />
+                            Retail Market Volume
+                          </span>
+                          <ArrowUpRight className="w-3.5 h-3.5 text-slate-400 group-hover:text-blue-500 group-hover:translate-x-0.5 group-hover:-translate-y-0.5 transition-transform" />
+                        </span>
+                        <div className="flex items-baseline gap-2 mt-2">
+                          <span className="text-2xl font-black text-blue-600 dark:text-blue-400 font-mono">{totalMarketQuantity.toLocaleString()} Units</span>
+                        </div>
+                        <div className="text-[9px] text-slate-400 mt-2 flex justify-between">
+                          <span>{totalMarketRevenue.toLocaleString(undefined, { maximumFractionDigits: 0 })} ETB Gross</span>
+                          <span>{productMetrics.length} Products</span>
                         </div>
                       </div>
                     </div>
@@ -3151,6 +3489,443 @@ export const SuperAdminConsole = ({
                             <span className="font-bold text-slate-500 font-mono">{(promoDiscountsSaved + couponDiscountsSaved).toLocaleString()} ETB</span>
                           </div>
                         </div>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* TAB: MARKET INTELLIGENCE & PRODUCT SALES ANALYTICS */}
+                {activeTab === 'market-intelligence' && (
+                  <div className="space-y-6">
+                    {/* Header & Controls */}
+                    <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 bg-white dark:bg-slate-900 p-6 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm">
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <div className="p-2 bg-blue-100 dark:bg-blue-950/60 text-blue-600 dark:text-blue-400 rounded-xl">
+                            <BarChart3 className="w-5 h-5" />
+                          </div>
+                          <h2 className="text-lg font-bold text-slate-900 dark:text-white font-mono">
+                            Network Market Intelligence & Product Sales
+                          </h2>
+                        </div>
+                        <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
+                          Cross-network retail volume, therapeutic demand velocity, and pharmacy distribution metrics
+                        </p>
+                      </div>
+
+                      <div className="flex flex-wrap items-center gap-2">
+                        <button
+                          onClick={() => loadMarketIntelligenceSales(marketDateRange, customStartDate, customEndDate)}
+                          disabled={marketSalesLoading}
+                          className="px-3.5 py-2 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 rounded-xl text-xs font-bold font-sans flex items-center gap-1.5 transition-all cursor-pointer disabled:opacity-50"
+                          title="Refresh Dataset"
+                        >
+                          <RefreshCw className={`w-3.5 h-3.5 ${marketSalesLoading ? 'animate-spin' : ''}`} />
+                          Sync Data
+                        </button>
+                        <button
+                          onClick={exportMarketIntelligenceCSV}
+                          disabled={filteredProducts.length === 0}
+                          className="px-3.5 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold font-sans flex items-center gap-1.5 transition-all cursor-pointer shadow-sm shadow-blue-500/20 disabled:opacity-50"
+                        >
+                          <Download className="w-3.5 h-3.5" />
+                          Export CSV Report
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Date Filters Ribbon */}
+                    <div className="bg-white dark:bg-slate-900 p-4 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-4">
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <span className="text-xs font-bold text-slate-400 uppercase mr-1 flex items-center gap-1">
+                          <Calendar className="w-3.5 h-3.5 text-blue-500" />
+                          Time Window:
+                        </span>
+                        {(
+                          [
+                            { id: 'today', label: 'Today' },
+                            { id: '7d', label: 'Last 7 Days' },
+                            { id: '30d', label: 'Last 30 Days' },
+                            { id: '90d', label: 'Last 90 Days' },
+                            { id: 'all', label: 'All Time' },
+                            { id: 'custom', label: 'Custom Range' },
+                          ] as const
+                        ).map(opt => (
+                          <button
+                            key={opt.id}
+                            onClick={() => {
+                              setMarketDateRange(opt.id);
+                              if (opt.id !== 'custom') {
+                                loadMarketIntelligenceSales(opt.id);
+                              }
+                            }}
+                            className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                              marketDateRange === opt.id
+                                ? 'bg-blue-600 text-white shadow-sm'
+                                : 'bg-slate-100 dark:bg-slate-800/80 text-slate-600 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-700'
+                            }`}
+                          >
+                            {opt.label}
+                          </button>
+                        ))}
+                      </div>
+
+                      {marketDateRange === 'custom' && (
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <input
+                            type="date"
+                            value={customStartDate}
+                            onChange={e => setCustomStartDate(e.target.value)}
+                            className="px-2.5 py-1.5 text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg text-slate-900 dark:text-white"
+                          />
+                          <span className="text-xs text-slate-400">to</span>
+                          <input
+                            type="date"
+                            value={customEndDate}
+                            onChange={e => setCustomEndDate(e.target.value)}
+                            className="px-2.5 py-1.5 text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg text-slate-900 dark:text-white"
+                          />
+                          <button
+                            onClick={() => loadMarketIntelligenceSales('custom', customStartDate, customEndDate)}
+                            className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold rounded-lg transition-all"
+                          >
+                            Apply
+                          </button>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* KPI Statistics Overview */}
+                    <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-4">
+                      <div className="bg-white dark:bg-slate-900 p-4 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm">
+                        <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Total Volume Sold</span>
+                        <div className="text-xl font-black text-slate-900 dark:text-white font-mono mt-1.5">
+                          {totalMarketQuantity.toLocaleString()} <span className="text-xs font-normal text-slate-400 font-sans">units</span>
+                        </div>
+                        <span className="text-[9px] text-blue-500 font-medium block mt-1">Dispensed products</span>
+                      </div>
+
+                      <div className="bg-white dark:bg-slate-900 p-4 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm">
+                        <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Network Retail Sales</span>
+                        <div className="text-xl font-black text-blue-600 dark:text-blue-400 font-mono mt-1.5 truncate">
+                          {totalMarketRevenue.toLocaleString(undefined, { maximumFractionDigits: 0 })} <span className="text-xs font-normal text-slate-400 font-sans">ETB</span>
+                        </div>
+                        <span className="text-[9px] text-slate-400 block mt-1">Gross consumer value</span>
+                      </div>
+
+                      <div className="bg-white dark:bg-slate-900 p-4 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm">
+                        <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Active Pharmacies</span>
+                        <div className="text-xl font-black text-emerald-600 dark:text-emerald-400 font-mono mt-1.5">
+                          {activeSellingPharmaciesCount} <span className="text-xs font-normal text-slate-400 font-sans">nodes</span>
+                        </div>
+                        <span className="text-[9px] text-slate-400 block mt-1">Dispensing in period</span>
+                      </div>
+
+                      <div className="bg-white dark:bg-slate-900 p-4 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm">
+                        <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Sales Transactions</span>
+                        <div className="text-xl font-black text-violet-600 dark:text-violet-400 font-mono mt-1.5">
+                          {marketSales.length.toLocaleString()} <span className="text-xs font-normal text-slate-400 font-sans">txns</span>
+                        </div>
+                        <span className="text-[9px] text-slate-400 block mt-1">Dispensing events</span>
+                      </div>
+
+                      <div className="bg-white dark:bg-slate-900 p-4 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm">
+                        <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Distinct Medicines</span>
+                        <div className="text-xl font-black text-amber-600 dark:text-amber-400 font-mono mt-1.5">
+                          {productMetrics.length.toLocaleString()} <span className="text-xs font-normal text-slate-400 font-sans">SKUs</span>
+                        </div>
+                        <span className="text-[9px] text-slate-400 block mt-1">Catalog items traded</span>
+                      </div>
+
+                      <div className="bg-white dark:bg-slate-900 p-4 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm">
+                        <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Avg Basket Value</span>
+                        <div className="text-xl font-black text-slate-900 dark:text-white font-mono mt-1.5 truncate">
+                          {marketSales.length > 0
+                            ? (totalMarketRevenue / marketSales.length).toFixed(0)
+                            : 0}{' '}
+                          <span className="text-xs font-normal text-slate-400 font-sans">ETB</span>
+                        </div>
+                        <span className="text-[9px] text-slate-400 block mt-1">Per retail transaction</span>
+                      </div>
+                    </div>
+
+                    {/* Visual Analytics Charts */}
+                    <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                      {/* Top Selling Products Bar Chart */}
+                      <div className="lg:col-span-2 bg-white dark:bg-slate-900 p-5 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm">
+                        <div className="flex items-center justify-between mb-4">
+                          <h4 className="text-xs font-bold text-slate-900 dark:text-white uppercase tracking-wider flex items-center gap-1.5">
+                            <TrendingUp className="w-4 h-4 text-blue-600" />
+                            Top Selling Products by Volume (Units Sold)
+                          </h4>
+                          <span className="text-[10px] text-slate-400">Top 8 items</span>
+                        </div>
+                        <div className="h-56 text-xs">
+                          {productMetrics.length > 0 ? (
+                            <ResponsiveContainer width="100%" height="100%">
+                              <BarChart
+                                data={productMetrics.slice(0, 8).map(p => ({
+                                  name: p.productName.length > 14 ? p.productName.slice(0, 12) + '…' : p.productName,
+                                  fullName: p.productName,
+                                  units: p.totalQuantitySold,
+                                  revenue: p.totalRevenue,
+                                }))}
+                                margin={{ top: 10, right: 10, left: -20, bottom: 20 }}
+                              >
+                                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#E2E8F0" />
+                                <XAxis dataKey="name" stroke="#94A3B8" angle={-15} textAnchor="end" interval={0} />
+                                <YAxis stroke="#94A3B8" />
+                                <Tooltip
+                                  formatter={(value: any, name: string) => [
+                                    name === 'units' ? `${Number(value).toLocaleString()} Units` : `${Number(value).toLocaleString()} ETB`,
+                                    name === 'units' ? 'Units Sold' : 'Revenue'
+                                  ]}
+                                />
+                                <Bar dataKey="units" fill="#2563EB" radius={[6, 6, 0, 0]} />
+                              </BarChart>
+                            </ResponsiveContainer>
+                          ) : (
+                            <div className="h-full flex items-center justify-center text-slate-400 text-xs">
+                              No sales volume recorded in selected window.
+                            </div>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Therapeutic Category Distribution Pie Chart */}
+                      <div className="bg-white dark:bg-slate-900 p-5 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm">
+                        <div className="flex items-center justify-between mb-4">
+                          <h4 className="text-xs font-bold text-slate-900 dark:text-white uppercase tracking-wider flex items-center gap-1.5">
+                            <Layers className="w-4 h-4 text-violet-600" />
+                            Category Volume Share
+                          </h4>
+                          <span className="text-[10px] text-slate-400">Share of units</span>
+                        </div>
+                        <div className="h-56 text-xs flex items-center justify-center">
+                          {categoryDistributionData.length > 0 ? (
+                            <ResponsiveContainer width="100%" height="100%">
+                              <PieChart>
+                                <Pie
+                                  data={categoryDistributionData}
+                                  dataKey="quantity"
+                                  nameKey="name"
+                                  cx="50%"
+                                  cy="50%"
+                                  outerRadius={70}
+                                  innerRadius={35}
+                                  paddingAngle={3}
+                                >
+                                  {categoryDistributionData.map((entry, index) => (
+                                    <Cell key={`cell-${index}`} fill={CATEGORY_COLORS[index % CATEGORY_COLORS.length]} />
+                                  ))}
+                                </Pie>
+                                <Tooltip
+                                  formatter={(value: any) => [`${Number(value).toLocaleString()} Units`, 'Volume']}
+                                />
+                              </PieChart>
+                            </ResponsiveContainer>
+                          ) : (
+                            <div className="text-slate-400 text-xs">No category data recorded</div>
+                          )}
+                        </div>
+                        {/* Legend pills */}
+                        <div className="flex flex-wrap gap-1.5 mt-2 justify-center">
+                          {categoryDistributionData.slice(0, 4).map((c, i) => (
+                            <div key={c.name} className="flex items-center gap-1 text-[10px] text-slate-600 dark:text-slate-400">
+                              <span className="w-2 h-2 rounded-full" style={{ backgroundColor: CATEGORY_COLORS[i % CATEGORY_COLORS.length] }} />
+                              <span className="truncate max-w-[90px]">{c.name}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Comprehensive Product Sales Leaderboard Table */}
+                    <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm overflow-hidden">
+                      {/* Table Controls Header */}
+                      <div className="p-5 border-b border-slate-100 dark:border-slate-800 flex flex-col md:flex-row md:items-center justify-between gap-4">
+                        <div>
+                          <h3 className="text-sm font-bold text-slate-900 dark:text-white font-mono flex items-center gap-2">
+                            <Package className="w-4 h-4 text-blue-600" />
+                            Product Performance & Sales Velocity Leaderboard
+                          </h3>
+                          <p className="text-xs text-slate-500 dark:text-slate-400">
+                            Showing {filteredProducts.length} ranked pharmaceutical products
+                          </p>
+                        </div>
+
+                        <div className="flex flex-wrap items-center gap-2">
+                          {/* Search */}
+                          <div className="relative">
+                            <Search className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                            <input
+                              type="text"
+                              value={marketSearchQuery}
+                              onChange={e => setMarketSearchQuery(e.target.value)}
+                              placeholder="Search product or generic..."
+                              className="pl-8 pr-3 py-1.5 text-xs bg-slate-50 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 rounded-xl text-slate-900 dark:text-white w-48 sm:w-56 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                            />
+                            {marketSearchQuery && (
+                              <button
+                                onClick={() => setMarketSearchQuery('')}
+                                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 text-xs"
+                              >
+                                ×
+                              </button>
+                            )}
+                          </div>
+
+                          {/* Category Filter */}
+                          <select
+                            value={marketCategoryFilter}
+                            onChange={e => setMarketCategoryFilter(e.target.value)}
+                            aria-label="Filter by Category"
+                            className="px-3 py-1.5 text-xs bg-slate-50 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 rounded-xl text-slate-900 dark:text-white focus:outline-none"
+                          >
+                            <option value="all">All Categories ({marketCategories.length})</option>
+                            {marketCategories.map(c => (
+                              <option key={c} value={c}>
+                                {c}
+                              </option>
+                            ))}
+                          </select>
+
+                          {/* Sort Selector */}
+                          <select
+                            value={marketSortBy}
+                            onChange={e => setMarketSortBy(e.target.value as any)}
+                            aria-label="Sort products by"
+                            className="px-3 py-1.5 text-xs bg-slate-50 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 rounded-xl text-slate-900 dark:text-white focus:outline-none"
+                          >
+                            <option value="quantity">Sort: Units Sold (High-Low)</option>
+                            <option value="revenue">Sort: Revenue Generated</option>
+                            <option value="pharmacies">Sort: Pharmacies Dispensing</option>
+                            <option value="frequency">Sort: Sales Frequency</option>
+                          </select>
+                        </div>
+                      </div>
+
+                      {/* Leaderboard Table */}
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-left border-collapse text-xs">
+                          <thead>
+                            <tr className="bg-slate-50/80 dark:bg-slate-800/50 border-b border-slate-200 dark:border-slate-800 text-[10px] font-bold text-slate-400 uppercase tracking-wider">
+                              <th className="py-3.5 px-4 w-12 text-center">Rank</th>
+                              <th className="py-3.5 px-4">Product & Formulation</th>
+                              <th className="py-3.5 px-4">Therapeutic Category</th>
+                              <th className="py-3.5 px-4 text-right">Units Dispensed</th>
+                              <th className="py-3.5 px-4 text-right">Gross Revenue (ETB)</th>
+                              <th className="py-3.5 px-4 text-center">Selling Pharmacies</th>
+                              <th className="py-3.5 px-4 text-right">Txn Frequency</th>
+                              <th className="py-3.5 px-4 text-right">Avg Price</th>
+                              <th className="py-3.5 px-4 text-right">Last Sale</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-slate-100 dark:divide-slate-800/80">
+                            {filteredProducts.length > 0 ? (
+                              filteredProducts.map((prod, idx) => {
+                                const maxQty = filteredProducts[0]?.totalQuantitySold || 1;
+                                const barWidth = Math.max(5, Math.round((prod.totalQuantitySold / maxQty) * 100));
+
+                                return (
+                                  <tr
+                                    key={prod.productName}
+                                    className="hover:bg-slate-50/60 dark:hover:bg-slate-800/40 transition-colors"
+                                  >
+                                    <td className="py-3.5 px-4 text-center font-mono font-bold">
+                                      {idx === 0 ? (
+                                        <span className="inline-flex items-center justify-center w-6 h-6 rounded-full bg-amber-100 dark:bg-amber-950/60 text-amber-600 dark:text-amber-400 text-xs">
+                                          1
+                                        </span>
+                                      ) : idx === 1 ? (
+                                        <span className="inline-flex items-center justify-center w-6 h-6 rounded-full bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-300 text-xs">
+                                          2
+                                        </span>
+                                      ) : idx === 2 ? (
+                                        <span className="inline-flex items-center justify-center w-6 h-6 rounded-full bg-amber-50 dark:bg-amber-900/30 text-amber-700 dark:text-amber-500 text-xs">
+                                          3
+                                        </span>
+                                      ) : (
+                                        <span className="text-slate-400">#{idx + 1}</span>
+                                      )}
+                                    </td>
+                                    <td className="py-3.5 px-4">
+                                      <div className="font-bold text-slate-900 dark:text-white">
+                                        {prod.productName}
+                                      </div>
+                                      {prod.genericName && (
+                                        <div className="text-[10px] text-slate-400">
+                                          Generic: {prod.genericName}
+                                        </div>
+                                      )}
+                                    </td>
+                                    <td className="py-3.5 px-4">
+                                      <span className="inline-block px-2 py-0.5 rounded-full text-[10px] font-medium bg-blue-50 dark:bg-blue-950/50 text-blue-600 dark:text-blue-400 border border-blue-100 dark:border-blue-900">
+                                        {prod.category}
+                                      </span>
+                                    </td>
+                                    <td className="py-3.5 px-4 text-right">
+                                      <div className="font-mono font-bold text-slate-900 dark:text-white">
+                                        {prod.totalQuantitySold.toLocaleString()}
+                                      </div>
+                                      <div className="w-20 bg-slate-100 dark:bg-slate-800 rounded-full h-1.5 mt-1 ml-auto overflow-hidden">
+                                        <div
+                                          className="bg-blue-600 h-full rounded-full transition-all"
+                                          style={{ width: `${barWidth}%` }}
+                                        />
+                                      </div>
+                                    </td>
+                                    <td className="py-3.5 px-4 text-right font-mono font-bold text-blue-600 dark:text-blue-400">
+                                      {prod.totalRevenue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                    </td>
+                                    <td className="py-3.5 px-4 text-center">
+                                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-emerald-50 dark:bg-emerald-950/40 text-emerald-600 dark:text-emerald-400 font-medium text-[11px]">
+                                        <Store className="w-3 h-3" />
+                                        {prod.uniquePharmacyCount} {prod.uniquePharmacyCount === 1 ? 'Pharmacy' : 'Pharmacies'}
+                                      </span>
+                                    </td>
+                                    <td className="py-3.5 px-4 text-right font-mono text-slate-600 dark:text-slate-400">
+                                      {prod.transactionCount.toLocaleString()}
+                                    </td>
+                                    <td className="py-3.5 px-4 text-right font-mono text-slate-600 dark:text-slate-400">
+                                      {prod.averagePrice.toFixed(2)}
+                                    </td>
+                                    <td className="py-3.5 px-4 text-right text-slate-400 text-[11px]">
+                                      {prod.lastSaleDate ? new Date(prod.lastSaleDate).toLocaleDateString() : '—'}
+                                    </td>
+                                  </tr>
+                                );
+                              })
+                            ) : (
+                              <tr>
+                                <td colSpan={9} className="py-12 text-center text-slate-400">
+                                  <ShoppingBag className="w-8 h-8 mx-auto mb-2 text-slate-300 dark:text-slate-600" />
+                                  <p className="font-medium text-xs">No sales data found matching your query or date range</p>
+                                  {(marketSearchQuery || marketCategoryFilter !== 'all') && (
+                                    <button
+                                      onClick={() => {
+                                        setMarketSearchQuery('');
+                                        setMarketCategoryFilter('all');
+                                      }}
+                                      className="mt-2 text-blue-600 text-xs font-bold underline cursor-pointer"
+                                    >
+                                      Clear Search and Filters
+                                    </button>
+                                  )}
+                                </td>
+                              </tr>
+                            )}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+
+                    {/* Data Isolation & Privacy Notice */}
+                    <div className="bg-slate-100/60 dark:bg-slate-800/30 p-4 rounded-2xl border border-slate-200 dark:border-slate-800 text-[11px] text-slate-500 dark:text-slate-400 flex items-start gap-3">
+                      <ShieldCheck className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0 mt-0.5" />
+                      <div>
+                        <span className="font-bold text-slate-700 dark:text-slate-300">Privacy & Multi-Tenant Data Isolation Protected: </span>
+                        Super Admin Market Intelligence aggregates anonymized point-of-sale volume across the pharmacy network. Personal patient health information, customer contact records, and individual pharmacy internal proprietary accounts remain strictly segregated and inaccessible.
                       </div>
                     </div>
                   </div>

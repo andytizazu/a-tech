@@ -33,7 +33,8 @@ import {
   query, 
   where, 
   onSnapshot, 
-  writeBatch
+  writeBatch,
+  runTransaction
 } from 'firebase/firestore';
 import { db } from '../firebase';
 import { UserProfile, Branch, Warehouse, WarehouseTransaction, InventoryProduct } from '../types';
@@ -339,7 +340,7 @@ export default function WarehousesView({ user, branches = [] }: WarehousesViewPr
     }
   };
 
-  // Stock Dispatch to Branch logic
+  // Stock Dispatch to Branch logic (Atomic Transaction)
   const handleStockDispatch = async (e: React.FormEvent) => {
     e.preventDefault();
     const { productId, targetBranchId, quantity, notes } = dispatchForm;
@@ -354,26 +355,12 @@ export default function WarehousesView({ user, branches = [] }: WarehousesViewPr
       return;
     }
 
-    if (sourceProduct.quantity < quantity) {
-      toast.error(`Insufficient stock! Only ${sourceProduct.quantity} units available in warehouse.`);
-      return;
-    }
-
     const tId = toast.loading('Dispatching stock to branch...');
     try {
       const activeWH = warehouses.find(w => w.id === sourceProduct.warehouseId)!;
       const targetBranchName = targetBranchId === `main_branch_${ownerId}` ? 'Main Branch (HQ)' : branches.find(b => b.id === targetBranchId)?.name || 'Pharmacy Branch';
-      
-      const batch = writeBatch(db);
 
-      // 1. Decrease Warehouse Quantity
-      const remainingWhQty = sourceProduct.quantity - Number(quantity);
-      batch.update(doc(db, 'medicines', sourceProduct.id), {
-        quantity: remainingWhQty
-      });
-
-      // 2. Fetch or Add Product to Target Pharmacy Branch
-      // Query if destination branch already has this product (by name and batchNumber)
+      // 1. Fetch potential matching destination branch product before transaction
       const matches = await getDocs(query(
         collection(db, 'medicines'),
         where('pharmacyId', '==', ownerId),
@@ -381,69 +368,99 @@ export default function WarehousesView({ user, branches = [] }: WarehousesViewPr
         where('batchNumber', '==', sourceProduct.batchNumber || '')
       ));
 
-      // Find one matching the target branchId
       const branchProductDoc = matches.docs.find(d => {
         const dData = d.data();
         const pBranchId = dData.branchId || `main_branch_${ownerId}`;
         return pBranchId === targetBranchId;
       });
 
-      let destinationId = '';
-      if (branchProductDoc) {
-        destinationId = branchProductDoc.id;
-        const currentBranchQty = branchProductDoc.data().quantity || 0;
-        batch.update(doc(db, 'medicines', destinationId), {
-          quantity: currentBranchQty + Number(quantity),
-          // sync prices and details if transfer modifies them
-          costPrice: sourceProduct.costPrice,
-          price: sourceProduct.price,
-          expiryDate: sourceProduct.expiryDate
+      const destinationId = branchProductDoc 
+        ? branchProductDoc.id 
+        : `prod_dispatch_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+      const isNewDestination = !branchProductDoc;
+
+      const sourceDocRef = doc(db, 'medicines', sourceProduct.id);
+      const targetDocRef = doc(db, 'medicines', destinationId);
+      const transId = `trans_wh_${Date.now()}`;
+      const transDocRef = doc(db, 'warehouse_transactions', transId);
+
+      // Execute atomic transaction: read fresh warehouse doc & destination doc, then write updates
+      await runTransaction(db, async (transaction) => {
+        const freshSourceSnap = await transaction.get(sourceDocRef);
+        if (!freshSourceSnap.exists()) {
+          throw new Error('Source warehouse product no longer exists.');
+        }
+
+        const freshSourceData = freshSourceSnap.data();
+        const currentWhQty = Number(freshSourceData.quantity) || 0;
+        const requestedQty = Number(quantity);
+
+        if (currentWhQty < requestedQty) {
+          throw new Error(`Insufficient stock in warehouse! Available: ${currentWhQty}, Requested: ${requestedQty}`);
+        }
+
+        let freshTargetQty = 0;
+        if (!isNewDestination) {
+          const freshTargetSnap = await transaction.get(targetDocRef);
+          if (freshTargetSnap.exists()) {
+            freshTargetQty = Number(freshTargetSnap.data().quantity) || 0;
+          }
+        }
+
+        // 1. Decrement warehouse stock
+        transaction.update(sourceDocRef, {
+          quantity: currentWhQty - requestedQty
         });
-      } else {
-        // Create duplicate product for the target branch
-        destinationId = `prod_dispatch_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
-        const newBranchProduct: InventoryProduct = {
-          id: destinationId,
-          name: sourceProduct.name,
-          category: sourceProduct.category,
-          price: sourceProduct.price,
-          costPrice: sourceProduct.costPrice,
-          quantity: Number(quantity),
-          batchNumber: sourceProduct.batchNumber || '',
-          expiryDate: sourceProduct.expiryDate,
-          supplier: sourceProduct.supplier,
+
+        // 2. Update or create branch stock
+        if (!isNewDestination) {
+          transaction.update(targetDocRef, {
+            quantity: freshTargetQty + requestedQty,
+            costPrice: sourceProduct.costPrice,
+            price: sourceProduct.price,
+            expiryDate: sourceProduct.expiryDate
+          });
+        } else {
+          const newBranchProduct: InventoryProduct = {
+            id: destinationId,
+            name: sourceProduct.name,
+            category: sourceProduct.category,
+            price: sourceProduct.price,
+            costPrice: sourceProduct.costPrice,
+            quantity: requestedQty,
+            batchNumber: sourceProduct.batchNumber || '',
+            expiryDate: sourceProduct.expiryDate,
+            supplier: sourceProduct.supplier,
+            pharmacyId: ownerId,
+            branchId: targetBranchId,
+            lowStockThreshold: sourceProduct.lowStockThreshold || 10,
+            createdAt: Date.now()
+          };
+          transaction.set(targetDocRef, newBranchProduct);
+        }
+
+        // 3. Record warehouse dispatch transaction
+        const whTransaction: WarehouseTransaction = {
+          id: transId,
           pharmacyId: ownerId,
-          branchId: targetBranchId,
-          lowStockThreshold: sourceProduct.lowStockThreshold || 10,
+          type: 'dispatch_to_branch',
+          productId: sourceProduct.id,
+          productName: sourceProduct.name,
+          batchNumber: sourceProduct.batchNumber,
+          expiryDate: sourceProduct.expiryDate,
+          quantity: requestedQty,
+          sourceId: sourceProduct.warehouseId!,
+          sourceName: activeWH ? activeWH.name : 'Central Warehouse',
+          destinationId: targetBranchId,
+          destinationName: targetBranchName,
+          costPrice: sourceProduct.costPrice,
+          sellingPrice: sourceProduct.price,
+          notes: notes || 'Dispatch to pharmacy inventory',
+          createdBy: user.displayName || user.email,
           createdAt: Date.now()
         };
-        batch.set(doc(db, 'medicines', destinationId), newBranchProduct);
-      }
-
-      // 3. Save warehouse dispatch log
-      const transId = `trans_wh_${Date.now()}`;
-      const transaction: WarehouseTransaction = {
-        id: transId,
-        pharmacyId: ownerId,
-        type: 'dispatch_to_branch',
-        productId: sourceProduct.id,
-        productName: sourceProduct.name,
-        batchNumber: sourceProduct.batchNumber,
-        expiryDate: sourceProduct.expiryDate,
-        quantity: Number(quantity),
-        sourceId: sourceProduct.warehouseId!,
-        sourceName: activeWH.name,
-        destinationId: targetBranchId,
-        destinationName: targetBranchName,
-        costPrice: sourceProduct.costPrice,
-        sellingPrice: sourceProduct.price,
-        notes: notes || 'Dispatch to pharmacy inventory',
-        createdBy: user.displayName || user.email,
-        createdAt: Date.now()
-      };
-
-      batch.set(doc(db, 'warehouse_transactions', transId), transaction);
-      await batch.commit();
+        transaction.set(transDocRef, whTransaction);
+      });
 
       toast.success(`Successfully dispatched ${quantity} units out to ${targetBranchName}!`, { id: tId });
       setDispatchForm({ productId: '', targetBranchId: '', quantity: 0, notes: '' });

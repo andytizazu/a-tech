@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { collection, query, where, onSnapshot, doc, updateDoc } from 'firebase/firestore';
+import { collection, query, where, onSnapshot, doc, updateDoc, limit, orderBy } from 'firebase/firestore';
 import { db } from '../firebase';
 import { toast } from 'react-hot-toast';
 import { motion, AnimatePresence } from 'motion/react';
@@ -126,15 +126,15 @@ export const AdminRatingsManagement: React.FC = () => {
       }
     );
 
-    // 2. Fetch all users to compute live referrals
-    const qUsers = query(collection(db, 'users'));
+    // 2. Fetch recent users to compute live referrals
+    const qUsers = query(collection(db, 'users'), limit(500));
     const unsubUsers = onSnapshot(qUsers, 
       (s) => setAllUsers(s.docs.map(d => ({ id: d.id, ...d.data() }))),
       (error) => console.error("Error fetching referrals:", error)
     );
 
-    // 3. Fetch all orders to compute sales volume
-    const qOrders = query(collection(db, 'orders'));
+    // 3. Fetch recent orders to compute sales volume
+    const qOrders = query(collection(db, 'orders'), orderBy('createdAt', 'desc'), limit(500));
     const unsubOrders = onSnapshot(qOrders, 
       (s) => setAllOrders(s.docs.map(d => ({ id: d.id, ...d.data() }))),
       (error) => console.error("Error fetching orders:", error)

@@ -31,7 +31,6 @@ export interface UserProfile {
   verificationDocs?: string[]; // URLs to uploaded files
   rejectionReason?: string;
   username?: string;
-  password?: string;
   staffRole?: string;
   pharmacyId?: string;
   branchId?: string; // Associated branch for pharmacy staff

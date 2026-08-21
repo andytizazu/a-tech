@@ -23,6 +23,7 @@ import {
   signInWithEmailAndPassword,
   createUserWithEmailAndPassword,
   sendPasswordResetEmail,
+  updatePassword,
   browserPopupRedirectResolver
 } from 'firebase/auth';
 import { 
@@ -38,6 +39,7 @@ import {
   deleteDoc,
   increment,
   writeBatch,
+  runTransaction,
   getDocs,
   getDocFromServer,
   orderBy,
@@ -3186,6 +3188,7 @@ const MarketplaceView = ({ user }: { user: UserProfile }) => {
   useEffect(() => {
     // We want to see products from the user's country AND "Global" products
     const userCountry = user.country || 'Global';
+    let unsubFallback: (() => void) | null = null;
     
     setLoading(true);
     const q = query(
@@ -3204,7 +3207,7 @@ const MarketplaceView = ({ user }: { user: UserProfile }) => {
         console.warn('Index missing for country filter, falling back to client-side filtering');
         // Fallback: list all and filter in memory if index is missing
         const qFallback = query(collection(db, 'products'), orderBy('createdAt', 'desc'), limit(100));
-        onSnapshot(qFallback, (snapshot) => {
+        unsubFallback = onSnapshot(qFallback, (snapshot) => {
           const all = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as MarketplaceProduct));
           setProducts(all.filter(p => p.country === userCountry || p.country === 'Global'));
           setLoading(false);
@@ -3214,7 +3217,12 @@ const MarketplaceView = ({ user }: { user: UserProfile }) => {
         setLoading(false);
       }
     });
-    return unsub;
+    return () => {
+      unsub();
+      if (unsubFallback) {
+        unsubFallback();
+      }
+    };
   }, [user.country]);
 
   const loadMore = async () => {
@@ -4618,6 +4626,7 @@ const AdminUserManagement = () => {
   const PAGE_SIZE = 50;
 
   useEffect(() => {
+    let unsubFallback: (() => void) | null = null;
     let q = query(collection(db, 'users'), orderBy('createdAt', 'desc'), limit(PAGE_SIZE));
     
     if (filter !== 'all') {
@@ -4635,7 +4644,7 @@ const AdminUserManagement = () => {
         process.env.NODE_ENV !== 'production' && console.warn('Missing index for user role filter, falling back to client-side filtering');
         // Fallback: fetch all new users and filter locally to prevent "silent empty state"
         const qFallback = query(collection(db, 'users'), orderBy('createdAt', 'desc'), limit(100));
-        onSnapshot(qFallback, (snapshot) => {
+        unsubFallback = onSnapshot(qFallback, (snapshot) => {
           const all = snapshot.docs.map(d => ({ uid: d.id, ...d.data() } as UserProfile));
           setUsers(filter === 'all' ? all : all.filter(u => u.role === filter));
           setLoading(false);
@@ -4655,6 +4664,9 @@ const AdminUserManagement = () => {
 
     return () => {
       unsub();
+      if (unsubFallback) {
+        unsubFallback();
+      }
       unsubSettings();
     };
   }, [filter]);
@@ -6365,6 +6377,7 @@ const Sidebar = ({
     { id: 'super-admin-audit', label: 'Audit Log Desk', icon: FileText, roles: ['admin'] },
     { id: 'super-admin-secops', label: 'Security (SOC)', icon: ShieldAlert, roles: ['admin'] },
     { id: 'super-admin-revenue', label: 'Revenue Analytics', icon: TrendingUp, roles: ['admin'] },
+    { id: 'super-admin-market-intelligence', label: 'Market & Product Intelligence', icon: BarChart3, roles: ['admin'] },
     { id: 'super-admin-health', label: 'System Vitals', icon: Activity, roles: ['admin'] },
     { id: 'super-admin-support', label: 'Support Center', icon: LifeBuoy, roles: ['admin'] },
     { id: 'super-admin-communication', label: 'Broadcaster', icon: Megaphone, roles: ['admin'] },
@@ -6955,9 +6968,9 @@ const DashboardView = ({
     const ownerId = role === 'staff' ? (user.pharmacyId || user.importerId) : user.uid;
 
     if (role === 'admin') {
-      // Admin sees everything
-      const qUsers = query(collection(db, 'users'));
-      const qOrders = query(collection(db, 'orders'));
+      // Admin sees everything (bounded for performance)
+      const qUsers = query(collection(db, 'users'), limit(500));
+      const qOrders = query(collection(db, 'orders'), orderBy('createdAt', 'desc'), limit(500));
       
       const unsubUsers = onSnapshot(qUsers, (snapshot) => {
         const users = snapshot.docs.map(d => d.data() as UserProfile);
@@ -8491,7 +8504,6 @@ const StaffManagementView = ({
         displayName: (newStaff as any).name,
         uid: staffUid,
         username,
-        password,
         email,
         pharmacyId: (user.role === 'pharmacy' ? user.uid : (user.role === 'staff' ? (user.pharmacyId || null) : null)),
         pharmacyName: user.pharmacyName || null,
@@ -8706,16 +8718,26 @@ const StaffManagementView = ({
                 <p className="font-mono font-bold">{generatedCreds.password}</p>
               </div>
             </div>
-            <div className="mt-6 flex gap-3">
+            <div className="mt-6 flex flex-wrap gap-3">
               <button 
                 onClick={() => {
-                  const link = `${window.location.origin}?login=staff&u=${generatedCreds.username}&p=${generatedCreds.password}&ph=${user.pharmacyName}`;
+                  const link = `${window.location.origin}?login=staff&u=${encodeURIComponent(generatedCreds.username)}&ph=${encodeURIComponent(user.pharmacyName || '')}`;
                   navigator.clipboard.writeText(link);
-                  toast.success('Login link copied to clipboard!');
+                  toast.success('Login link copied to clipboard (without password)!');
                 }}
                 className="bg-white text-blue-600 px-6 py-2 rounded-xl font-bold hover:bg-blue-50 transition-all flex items-center gap-2 text-sm"
               >
                 <ExternalLink size={16} /> Copy Login Link
+              </button>
+              <button 
+                onClick={() => {
+                  const text = `ATECH Staff Credentials\nPharmacy: ${user.pharmacyName || ''}\nUsername: ${generatedCreds.username}\nTemporary Password: ${generatedCreds.password}\nLogin URL: ${window.location.origin}?login=staff&u=${encodeURIComponent(generatedCreds.username)}&ph=${encodeURIComponent(user.pharmacyName || '')}`;
+                  navigator.clipboard.writeText(text);
+                  toast.success('Credentials copied to clipboard!');
+                }}
+                className="bg-blue-700/80 text-white border border-white/30 px-6 py-2 rounded-xl font-bold hover:bg-blue-700 transition-all flex items-center gap-2 text-sm"
+              >
+                <Copy size={16} /> Copy Credentials
               </button>
             </div>
           </div>
@@ -9097,31 +9119,45 @@ const BranchesView = ({ user, branches = [], settings = null }: { user: UserProf
     const actionToast = toast.loading(dispatchImmediately ? 'Registering transfer and committing stock reservations...' : 'Creating transfer request on system...');
 
     try {
-      const batch = writeBatch(db);
-      
-      // Save transfer record to Firestore
       const trDocRef = doc(db, 'transfers', nextId);
-      batch.set(trDocRef, newTransferRecord);
 
       if (dispatchImmediately) {
-        // Reservable stock safety locking
+        // Atomic transaction: verify live available quantity for every item and lock into reserved
+        await runTransaction(db, async (transaction) => {
+          const itemDocs: { ref: any; currentQty: number; currentReserved: number; requestedQty: number; item: any }[] = [];
+          for (const it of transferDraftItems) {
+            const itemRef = doc(db, 'medicines', it.productId);
+            const snap = await transaction.get(itemRef);
+            if (!snap.exists()) {
+              throw new Error(`Product ${it.productName} is missing inside system data`);
+            }
+            const data = snap.data();
+            const currentQty = Number(data.quantity) || 0;
+            const currentReserved = Number(data.reserved) || 0;
+            if (currentQty < it.quantity) {
+              throw new Error(`Insufficient stock for ${it.productName}. Available: ${currentQty}, Requested: ${it.quantity}`);
+            }
+            itemDocs.push({
+              ref: itemRef,
+              currentQty,
+              currentReserved,
+              requestedQty: it.quantity,
+              item: it
+            });
+          }
+
+          // Write updates atomically
+          transaction.set(trDocRef, newTransferRecord);
+          for (const entry of itemDocs) {
+            transaction.update(entry.ref, {
+              quantity: entry.currentQty - entry.requestedQty,
+              reserved: entry.currentReserved + entry.requestedQty
+            });
+          }
+        });
+
+        // Audit item level action after transaction
         for (const it of transferDraftItems) {
-          const liveSourceItem = allProducts.find(p => p.id === it.productId);
-          if (!liveSourceItem) {
-            throw new Error(`Product ${it.productName} is missing inside system data`);
-          }
-          if (liveSourceItem.quantity < it.quantity) {
-            throw new Error(`Insufficient stock for ${it.productName}. Available: ${liveSourceItem.quantity}`);
-          }
-
-          // Lock: subtract quantity, increment reserved
-          const itemRef = doc(db, 'medicines', it.productId);
-          batch.update(itemRef, {
-            quantity: increment(-it.quantity),
-            reserved: increment(it.quantity)
-          });
-
-          // Audit item level action
           await addDoc(collection(db, 'audit_logs'), {
             uid: user.uid,
             action: 'Created',
@@ -9133,6 +9169,10 @@ const BranchesView = ({ user, branches = [], settings = null }: { user: UserProf
             timestamp: Date.now()
           });
         }
+      } else {
+        const batch = writeBatch(db);
+        batch.set(trDocRef, newTransferRecord);
+        await batch.commit();
       }
 
       // Add main audit trail entry
@@ -9144,8 +9184,6 @@ const BranchesView = ({ user, branches = [], settings = null }: { user: UserProf
         branch: fromBranchName,
         timestamp: Date.now()
       });
-
-      await batch.commit();
 
       toast.success(dispatchImmediately ? 'Dispatched successfully! Stock locked under reserved transit.' : 'Transfer request drafted!', { id: actionToast });
       
@@ -9161,13 +9199,12 @@ const BranchesView = ({ user, branches = [], settings = null }: { user: UserProf
     }
   };
 
-  // State Reconciliation Action System (Dispatch, Receive, Reject)
+  // State Reconciliation Action System (Dispatch, Receive, Reject) - Atomic Operations
   const handleExecuteTransferStateChange = async (transfer: any, action: 'dispatch' | 'receive' | 'reject') => {
     const operatorName = user.displayName || user.email || 'Staff';
     const actionToast = toast.loading(`Committing transition ${action.toUpperCase()} for transfer sheet ${transfer.transferNumber}...`);
 
     try {
-      const batch = writeBatch(db);
       const docRef = doc(db, 'transfers', transfer.id);
       const currentHistory = [...(transfer.statusHistory || [])];
 
@@ -9178,24 +9215,49 @@ const BranchesView = ({ user, branches = [], settings = null }: { user: UserProf
           user: operatorName
         });
 
-        // Loop items check & reserve
-        for (const item of transfer.items) {
-          const originalProd = allProducts.find(p => p.id === item.productId);
-          if (!originalProd) {
-            throw new Error(`Source product item ${item.productName} cannot be located in current branch catalogs.`);
-          }
-          if (originalProd.quantity < item.quantity) {
-            throw new Error(`Insufficient stock in ${item.productName}. Available: ${originalProd.quantity}`);
+        // Atomic transaction: verify and lock items
+        await runTransaction(db, async (transaction) => {
+          const itemDocs: { ref: any; currentQty: number; currentReserved: number; requestedQty: number; item: any }[] = [];
+          for (const item of transfer.items) {
+            const itemRef = doc(db, 'medicines', item.productId);
+            const snap = await transaction.get(itemRef);
+            if (!snap.exists()) {
+              throw new Error(`Source product item ${item.productName} cannot be located in current branch catalogs.`);
+            }
+            const data = snap.data();
+            const currentQty = Number(data.quantity) || 0;
+            const currentReserved = Number(data.reserved) || 0;
+            if (currentQty < item.quantity) {
+              throw new Error(`Insufficient stock in ${item.productName}. Available: ${currentQty}, Requested: ${item.quantity}`);
+            }
+            itemDocs.push({
+              ref: itemRef,
+              currentQty,
+              currentReserved,
+              requestedQty: item.quantity,
+              item
+            });
           }
 
-          // Lock and reserve
-          const itemRef = doc(db, 'medicines', item.productId);
-          batch.update(itemRef, {
-            quantity: increment(-item.quantity),
-            reserved: increment(item.quantity)
+          // Apply writes
+          for (const entry of itemDocs) {
+            transaction.update(entry.ref, {
+              quantity: entry.currentQty - entry.requestedQty,
+              reserved: entry.currentReserved + entry.requestedQty
+            });
+          }
+
+          transaction.update(docRef, {
+            status: 'in_transit',
+            statusHistory: currentHistory,
+            dispatchUser: operatorName,
+            dispatchDate: Date.now(),
+            updatedAt: Date.now()
           });
+        });
 
-          // Individual audit
+        // Audit logs after transaction
+        for (const item of transfer.items) {
           await addDoc(collection(db, 'audit_logs'), {
             uid: user.uid,
             action: 'Dispatched',
@@ -9208,16 +9270,6 @@ const BranchesView = ({ user, branches = [], settings = null }: { user: UserProf
           });
         }
 
-        // Update transfer status to in_transit
-        batch.update(docRef, {
-          status: 'in_transit',
-          statusHistory: currentHistory,
-          dispatchUser: operatorName,
-          dispatchDate: Date.now(),
-          updatedAt: Date.now()
-        });
-
-        // Log main dispatch audit
         await addDoc(collection(db, 'audit_logs'), {
           uid: user.uid,
           action: 'Dispatched',
@@ -9234,19 +9286,108 @@ const BranchesView = ({ user, branches = [], settings = null }: { user: UserProf
           user: operatorName
         });
 
-        // Dual system inventory safe movements
-        for (const item of transfer.items) {
-          const originalProd = allProducts.find(p => p.id === item.productId || (p.name === item.productName && p.batchNumber === item.batchNumber));
+        // Pre-fetch target matching products from Firestore before transaction
+        const fallbackHQId = `main_branch_${ownerId}`;
+        const targetMatches = await getDocs(query(
+          collection(db, 'medicines'),
+          where('pharmacyId', '==', ownerId)
+        ));
+        const allMeds = targetMatches.docs.map(d => ({ id: d.id, ...d.data() } as InventoryProduct));
+
+        const targetCatalogResolutions = transfer.items.map((item: any) => {
+          const matchedTarget = allMeds.find(p => 
+            p.name === item.productName && 
+            p.batchNumber === item.batchNumber && 
+            ((p.branchId || fallbackHQId) === transfer.toBranchId || 
+             ((p.branchId === 'main-branch' || p.branchId === fallbackHQId || !p.branchId) && 
+              (transfer.toBranchId === 'main-branch' || transfer.toBranchId === fallbackHQId)))
+          );
+          const originalProd = allMeds.find(p => p.id === item.productId || (p.name === item.productName && p.batchNumber === item.batchNumber));
+          const targetId = matchedTarget?.id || `prod_${Date.now()}_tgt_${Math.random().toString(36).substring(2, 6)}`;
+          return {
+            item,
+            originalProd,
+            matchedTarget,
+            targetId,
+            isNewTarget: !matchedTarget
+          };
+        });
+
+        // Atomic transaction: release source reserved and increment/set target branch stock
+        await runTransaction(db, async (transaction) => {
+          // 1. Read source docs and target docs
+          const sourceReads: { ref: any; currentReserved: number; item: any }[] = [];
+          const targetReads: { ref: any; currentQty: number; resolution: any }[] = [];
+
+          for (const res of targetCatalogResolutions) {
+            if (res.originalProd) {
+              const srcRef = doc(db, 'medicines', res.originalProd.id);
+              const srcSnap = await transaction.get(srcRef);
+              if (srcSnap.exists()) {
+                sourceReads.push({
+                  ref: srcRef,
+                  currentReserved: Number(srcSnap.data().reserved) || 0,
+                  item: res.item
+                });
+              }
+            }
+
+            const targetRef = doc(db, 'medicines', res.targetId);
+            if (!res.isNewTarget) {
+              const targetSnap = await transaction.get(targetRef);
+              const curQty = targetSnap.exists() ? (Number(targetSnap.data().quantity) || 0) : 0;
+              targetReads.push({ ref: targetRef, currentQty: curQty, resolution: res });
+            } else {
+              targetReads.push({ ref: targetRef, currentQty: 0, resolution: res });
+            }
+          }
+
+          // 2. Apply writes
+          for (const src of sourceReads) {
+            transaction.update(src.ref, {
+              reserved: Math.max(0, src.currentReserved - src.item.quantity)
+            });
+          }
+
+          for (const tgt of targetReads) {
+            const { resolution, currentQty, ref } = tgt;
+            const item = resolution.item;
+            if (!resolution.isNewTarget) {
+              transaction.update(ref, {
+                quantity: currentQty + item.quantity
+              });
+            } else {
+              const sourceTemplate = resolution.originalProd || allMeds.find(p => p.name === item.productName) || {};
+              const copiedMedicineEntry = {
+                ...sourceTemplate,
+                id: resolution.targetId,
+                pharmacyId: ownerId,
+                branchId: transfer.toBranchId,
+                quantity: item.quantity,
+                reserved: 0,
+                createdAt: Date.now()
+              };
+              copiedMedicineEntry.branchId = transfer.toBranchId;
+              transaction.set(ref, copiedMedicineEntry);
+            }
+          }
+
+          transaction.update(docRef, {
+            status: 'completed',
+            statusHistory: currentHistory,
+            receivingUser: operatorName,
+            receiptDate: Date.now(),
+            updatedAt: Date.now()
+          });
+        });
+
+        // Write Bin Card movements & audit logs after transaction commits
+        for (const res of targetCatalogResolutions) {
+          const item = res.item;
+          const originalProd = res.originalProd;
           const conversionRatio = originalProd?.conversionFactor || 1;
 
-          // 1. Permanently remove locked quantity from source reserved
           if (originalProd) {
-            const srcDocRef = doc(db, 'medicines', originalProd.id);
-            batch.update(srcDocRef, {
-              reserved: increment(-item.quantity)
-            });
-
-            // Bin Card movement outbound
             await recordBinCardMovement(db, {
               pharmacyId: ownerId,
               branchId: transfer.fromBranchId,
@@ -9268,82 +9409,26 @@ const BranchesView = ({ user, branches = [], settings = null }: { user: UserProf
             });
           }
 
-          // 2. Safely credit target branch catalog
-          const fallbackHQId = `main_branch_${ownerId}`;
-          const targetCatalogProduct = allProducts.find(p => 
-            p.name === item.productName && 
-            p.batchNumber === item.batchNumber && 
-            ((p.branchId || fallbackHQId) === transfer.toBranchId || 
-             ((p.branchId === 'main-branch' || p.branchId === fallbackHQId || !p.branchId) && 
-              (transfer.toBranchId === 'main-branch' || transfer.toBranchId === fallbackHQId)))
-          );
+          await recordBinCardMovement(db, {
+            pharmacyId: ownerId,
+            branchId: transfer.toBranchId,
+            productId: res.targetId,
+            productName: item.productName,
+            genericName: item.genericName || '',
+            transactionType: 'Transfer In',
+            referenceNumber: transfer.transferNumber,
+            quantityIn: item.quantity * conversionRatio,
+            quantityOut: 0,
+            balance: (res.matchedTarget ? (res.matchedTarget.quantity + item.quantity) : item.quantity) * conversionRatio,
+            user: operatorName,
+            branch: transfer.toBranchName,
+            product: item.productName,
+            countryOfOrigin: originalProd?.countryOfOrigin || '',
+            purchaseUnit: originalProd?.purchaseUnit || '',
+            dispensingUnit: originalProd?.dispensingUnit || '',
+            conversionFactor: conversionRatio
+          });
 
-          const newTargetId = targetCatalogProduct?.id || `prod_${Date.now()}_tgt_${Math.random().toString(36).substring(2, 6)}`;
-          const targetDocRef = doc(db, 'medicines', newTargetId);
-
-          if (targetCatalogProduct) {
-            batch.update(targetDocRef, {
-              quantity: increment(item.quantity)
-            });
-
-            // Bin Card movement inbound
-            await recordBinCardMovement(db, {
-              pharmacyId: ownerId,
-              branchId: transfer.toBranchId,
-              productId: targetCatalogProduct.id,
-              productName: item.productName,
-              genericName: item.genericName || '',
-              transactionType: 'Transfer In',
-              referenceNumber: transfer.transferNumber,
-              quantityIn: item.quantity * conversionRatio,
-              quantityOut: 0,
-              balance: (targetCatalogProduct.quantity + item.quantity) * conversionRatio,
-              user: operatorName,
-              branch: transfer.toBranchName,
-              product: item.productName,
-              countryOfOrigin: targetCatalogProduct.countryOfOrigin || '',
-              purchaseUnit: targetCatalogProduct.purchaseUnit || '',
-              dispensingUnit: targetCatalogProduct.dispensingUnit || '',
-              conversionFactor: conversionRatio
-            });
-          } else {
-            // Duplicate attributes but update branch destination keys
-            const sourceTemplate = originalProd || allProducts.find(p => p.name === item.productName) || {};
-            const copiedMedicineEntry = {
-              ...sourceTemplate,
-              id: newTargetId,
-              pharmacyId: ownerId,
-              branchId: transfer.toBranchId,
-              quantity: item.quantity,
-              reserved: 0,
-              createdAt: Date.now()
-            };
-            copiedMedicineEntry.branchId = transfer.toBranchId;
-            batch.set(targetDocRef, copiedMedicineEntry);
-
-            // Bin Card inbound new creation
-            await recordBinCardMovement(db, {
-              pharmacyId: ownerId,
-              branchId: transfer.toBranchId,
-              productId: newTargetId,
-              productName: item.productName,
-              genericName: item.genericName || '',
-              transactionType: 'Transfer In',
-              referenceNumber: transfer.transferNumber,
-              quantityIn: item.quantity * conversionRatio,
-              quantityOut: 0,
-              balance: item.quantity * conversionRatio,
-              user: operatorName,
-              branch: transfer.toBranchName,
-              product: item.productName,
-              countryOfOrigin: sourceTemplate.countryOfOrigin || '',
-              purchaseUnit: sourceTemplate.purchaseUnit || '',
-              dispensingUnit: sourceTemplate.dispensingUnit || '',
-              conversionFactor: conversionRatio
-            });
-          }
-
-          // Credit item level receipt audit
           await addDoc(collection(db, 'audit_logs'), {
             uid: user.uid,
             action: 'Received',
@@ -9356,16 +9441,6 @@ const BranchesView = ({ user, branches = [], settings = null }: { user: UserProf
           });
         }
 
-        // Close Transfer
-        batch.update(docRef, {
-          status: 'completed',
-          statusHistory: currentHistory,
-          receivingUser: operatorName,
-          receiptDate: Date.now(),
-          updatedAt: Date.now()
-        });
-
-        // Audit main completed
         await addDoc(collection(db, 'audit_logs'), {
           uid: user.uid,
           action: 'Completed',
@@ -9382,18 +9457,34 @@ const BranchesView = ({ user, branches = [], settings = null }: { user: UserProf
           user: operatorName
         });
 
-        // Rollback reserved locks back into active available quantity
-        for (const item of transfer.items) {
-          const originalProd = allProducts.find(p => p.id === item.productId || (p.name === item.productName && p.batchNumber === item.batchNumber));
-          if (originalProd) {
-            const srcDocRef = doc(db, 'medicines', originalProd.id);
-            batch.update(srcDocRef, {
-              reserved: increment(-item.quantity),
-              quantity: increment(item.quantity)
-            });
+        // Atomic transaction: Rollback reserved locks back into active available quantity
+        await runTransaction(db, async (transaction) => {
+          for (const item of transfer.items) {
+            const originalProd = allProducts.find(p => p.id === item.productId || (p.name === item.productName && p.batchNumber === item.batchNumber));
+            if (originalProd) {
+              const srcDocRef = doc(db, 'medicines', originalProd.id);
+              const snap = await transaction.get(srcDocRef);
+              if (snap.exists()) {
+                const data = snap.data();
+                const curReserved = Number(data.reserved) || 0;
+                const curQty = Number(data.quantity) || 0;
+                transaction.update(srcDocRef, {
+                  reserved: Math.max(0, curReserved - item.quantity),
+                  quantity: curQty + item.quantity
+                });
+              }
+            }
           }
 
-          // Item level rejection rollback audit
+          transaction.update(docRef, {
+            status: 'rejected',
+            statusHistory: currentHistory,
+            updatedAt: Date.now()
+          });
+        });
+
+        // Rejection audit logs
+        for (const item of transfer.items) {
           await addDoc(collection(db, 'audit_logs'), {
             uid: user.uid,
             action: 'Rejected',
@@ -9406,14 +9497,6 @@ const BranchesView = ({ user, branches = [], settings = null }: { user: UserProf
           });
         }
 
-        // Lock Rejected state
-        batch.update(docRef, {
-          status: 'rejected',
-          statusHistory: currentHistory,
-          updatedAt: Date.now()
-        });
-
-        // Audit main release
         await addDoc(collection(db, 'audit_logs'), {
           uid: user.uid,
           action: 'Rejected',
@@ -9424,7 +9507,6 @@ const BranchesView = ({ user, branches = [], settings = null }: { user: UserProf
         });
       }
 
-      await batch.commit();
       toast.success(`Action: ${action.toUpperCase()} completed and synchronized!`, { id: actionToast });
       
       // Update modal view in real time
@@ -11580,20 +11662,36 @@ const SalesView = ({
         return;
       }
 
-      // Online default flow
-      const batch = writeBatch(db);
-      const saleRef = doc(db, 'sales', saleId);
-      batch.set(saleRef, sale);
+      // Online default flow: Atomic transaction with live stock check
+      await runTransaction(db, async (transaction) => {
+        const itemDocs: { ref: any; currentQty: number; requestedQty: number; name: string }[] = [];
+        for (const item of cart) {
+          const productRef = doc(db, 'medicines', item.productId);
+          const snap = await transaction.get(productRef);
+          if (!snap.exists()) {
+            throw new Error(`Product "${item.name}" not found in current inventory.`);
+          }
+          const currentQty = Number(snap.data().quantity) || 0;
+          if (currentQty < item.quantity) {
+            throw new Error(`Insufficient stock for ${item.name}. Available: ${currentQty}`);
+          }
+          itemDocs.push({
+            ref: productRef,
+            currentQty,
+            requestedQty: item.quantity,
+            name: item.name
+          });
+        }
 
-      cart.forEach(item => {
-        const productRef = doc(db, 'medicines', item.productId);
-        batch.update(productRef, {
-          quantity: increment(-item.quantity)
-        });
+        // Atomically set sale record and decrement medicines
+        const saleRef = doc(db, 'sales', saleId);
+        transaction.set(saleRef, sale);
+        for (const it of itemDocs) {
+          transaction.update(it.ref, {
+            quantity: it.currentQty - it.requestedQty
+          });
+        }
       });
-
-      await new Promise(resolve => setTimeout(resolve, 1200));
-      await batch.commit();
 
       // Write Bin Card Movements for each Cart Item (Online Flow)
       for (const item of cart) {
@@ -12276,30 +12374,43 @@ export default function App() {
     for (const item of currentQueue) {
       try {
         if (item.type === 'sale') {
-          // Double-transaction prevention: Check server before writing
-          try {
-            const docSnap = await getDocFromServer(doc(db, 'sales', item.id));
-            if (docSnap.exists()) {
-              console.log(`Sale transaction ${item.id} already exists on the server. Skipping dec.`);
-              continue;
+          // Double-transaction prevention & atomic stock deduction via runTransaction
+          await runTransaction(db, async (transaction) => {
+            const saleRef = doc(db, 'sales', item.id);
+            const saleSnap = await transaction.get(saleRef);
+            if (saleSnap.exists()) {
+              console.log(`Sale transaction ${item.id} already exists on the server. Skipping duplicate commit.`);
+              return;
             }
-          } catch (e) {
-            console.warn(`Could not check sale existence on server:`, e);
-          }
 
-          // Write sale document idempotent setDoc
-          await setDoc(doc(db, 'sales', item.id), item.data);
+            // Verify and collect medicine deductions
+            const itemDocs: { ref: any; currentQty: number; requestedQty: number }[] = [];
+            if (Array.isArray(item.data?.items)) {
+              for (const cartItem of item.data.items) {
+                const medicineId = cartItem.productId || cartItem.medicineId;
+                if (medicineId) {
+                  const productRef = doc(db, 'medicines', medicineId);
+                  const snap = await transaction.get(productRef);
+                  if (snap.exists()) {
+                    const currentQty = Number(snap.data().quantity) || 0;
+                    itemDocs.push({
+                      ref: productRef,
+                      currentQty,
+                      requestedQty: Number(cartItem.quantity) || 0
+                    });
+                  }
+                }
+              }
+            }
 
-          // Update medicine levels safely
-          const batch = writeBatch(db);
-          item.data.items.forEach((cartItem: any) => {
-            const medicineId = cartItem.productId || cartItem.medicineId;
-            const medicineRef = doc(db, 'medicines', medicineId);
-            batch.update(medicineRef, {
-              quantity: increment(-cartItem.quantity)
-            });
+            // Atomically write sale record and update stock
+            transaction.set(saleRef, item.data);
+            for (const it of itemDocs) {
+              transaction.update(it.ref, {
+                quantity: Math.max(0, it.currentQty - it.requestedQty)
+              });
+            }
           });
-          await batch.commit();
 
         } else if (item.type === 'inventory') {
           const medicineRef = doc(db, 'medicines', item.id);
@@ -12601,7 +12712,7 @@ export default function App() {
     });
 
     return () => unsub();
-  }, [profile]);
+  }, [profile?.uid, profile?.role, profile?.pharmacyId]);
 
   // Synchronize warehouses for pharmacy owners and staff
   useEffect(() => {
@@ -12625,7 +12736,7 @@ export default function App() {
     });
 
     return () => unsub();
-  }, [profile]);
+  }, [profile?.uid, profile?.role, profile?.pharmacyId]);
 
   // Set selected branch role restrictions
   useEffect(() => {
@@ -13327,12 +13438,21 @@ export default function App() {
                                   toast.error('Password must be at least 6 characters');
                                   return;
                                 }
+                                if (!auth.currentUser) {
+                                  toast.error('Active session not found. Please log in again.');
+                                  return;
+                                }
                                 try {
-                                  await updateDoc(doc(db, 'users', user.uid), { password: newPass });
-                                  toast.success('Password updated successfully!');
+                                  await updatePassword(auth.currentUser, newPass);
+                                  toast.success('Password updated successfully in Firebase Authentication!');
                                   (document.getElementById('new-password') as HTMLInputElement).value = '';
-                                } catch (error) {
-                                  toast.error('Failed to update password');
+                                } catch (error: any) {
+                                  console.error('Password update error:', error);
+                                  if (error?.code === 'auth/requires-recent-login') {
+                                    toast.error('For security reasons, please log out and log back in before changing your password.');
+                                  } else {
+                                    toast.error(error?.message || 'Failed to update password');
+                                  }
                                 }
                               }}
                               className="bg-blue-600 text-white px-6 py-2 rounded-lg font-bold hover:bg-blue-700 transition-colors shadow-lg shadow-blue-100 dark:shadow-none"

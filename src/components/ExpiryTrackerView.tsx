@@ -174,7 +174,7 @@ export const ExpiryTrackerView = ({
     });
 
     return () => unsubscribe();
-  }, [ownerId, user]);
+  }, [ownerId, (user as any)?.email]);
 
   // Load notification logs from LocalStorage simulating high fidelity system audit
   useEffect(() => {

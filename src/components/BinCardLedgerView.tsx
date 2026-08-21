@@ -8,7 +8,8 @@ import {
   doc, 
   setDoc, 
   increment,
-  updateDoc
+  updateDoc,
+  runTransaction
 } from 'firebase/firestore';
 import { db } from '../firebase';
 import { InventoryProduct, Branch, UserProfile, BinCardEntry } from '../types';
@@ -115,46 +116,65 @@ const BinCardLedgerView = ({
     // Let's make it plain Dispensing Units and automatically calculate deduction/addition in purchase units!
     // Or we let them choose. Let's make manual log strictly Dispensing Units because returns/adjustments at dispensary are usually in single tablet/strip/bottle units!
     const changeInPurchaseUnits = formQty / factor;
-    let nextQty = prod.quantity;
-
-    if (formType === 'Purchase' || formType === 'Return') {
-      nextQty = prod.quantity + changeInPurchaseUnits;
-    } else { // Adjustment
-      nextQty = Math.max(0, prod.quantity - changeInPurchaseUnits);
-    }
 
     const transToast = toast.loading('Logging stock transaction...');
     try {
-      // 1. Update medicine stock
-      await updateDoc(doc(db, 'medicines', formProductId), {
-        quantity: nextQty
+      const movementId = 'bm_man_' + Date.now();
+      let calculatedBalance = 0;
+
+      await runTransaction(db, async (transaction) => {
+        const medRef = doc(db, 'medicines', formProductId);
+        const medSnap = await transaction.get(medRef);
+        if (!medSnap.exists()) {
+          throw new Error('Medicine document not found');
+        }
+
+        const currentQty = Number(medSnap.data().quantity) || 0;
+        let nextQty = currentQty;
+
+        if (formType === 'Purchase' || formType === 'Return') {
+          nextQty = currentQty + changeInPurchaseUnits;
+        } else { // Adjustment
+          if (currentQty < changeInPurchaseUnits) {
+            throw new Error(`Insufficient stock for adjustment. Available: ${currentQty * factor} ${prod.dispensingUnit || 'units'}`);
+          }
+          nextQty = Math.max(0, currentQty - changeInPurchaseUnits);
+        }
+
+        calculatedBalance = nextQty * factor;
+
+        // Update medicine stock
+        transaction.update(medRef, {
+          quantity: nextQty
+        });
+
+        // Add Bin Card Movement record
+        const newMovement: BinCardEntry = {
+          id: movementId,
+          pharmacyId: ownerId,
+          branchId: targetBranch,
+          productId: formProductId,
+          productName: prod.name,
+          genericName: prod.genericName || '',
+          date: Date.now(),
+          transactionType: formType,
+          referenceNumber: formRefMsg.trim() || 'MANUAL-' + Date.now().toString().slice(-4),
+          quantityIn: (formType === 'Purchase' || formType === 'Return') ? formQty : 0,
+          quantityOut: (formType === 'Adjustment') ? formQty : 0,
+          balance: calculatedBalance,
+          user: user.displayName || user.email || 'Staff',
+          branch: branchName,
+          product: prod.name,
+          countryOfOrigin: prod.countryOfOrigin || '',
+          purchaseUnit: prod.purchaseUnit || '',
+          dispensingUnit: prod.dispensingUnit || '',
+          conversionFactor: factor
+        };
+
+        const movementRef = doc(db, 'inventory_movements', movementId);
+        transaction.set(movementRef, newMovement);
       });
 
-      // 2. Add Bin Card Movement record
-      const movementId = 'bm_man_' + Date.now();
-      const newMovement: BinCardEntry = {
-        id: movementId,
-        pharmacyId: ownerId,
-        branchId: targetBranch,
-        productId: formProductId,
-        productName: prod.name,
-        genericName: prod.genericName || '',
-        date: Date.now(),
-        transactionType: formType,
-        referenceNumber: formRefMsg.trim() || 'MANUAL-' + Date.now().toString().slice(-4),
-        quantityIn: (formType === 'Purchase' || formType === 'Return') ? formQty : 0,
-        quantityOut: (formType === 'Adjustment') ? formQty : 0,
-        balance: nextQty * factor,
-        user: user.displayName || user.email || 'Staff',
-        branch: branchName,
-        product: prod.name,
-        countryOfOrigin: prod.countryOfOrigin || '',
-        purchaseUnit: prod.purchaseUnit || '',
-        dispensingUnit: prod.dispensingUnit || '',
-        conversionFactor: factor
-      };
-
-      await setDoc(doc(db, 'inventory_movements', movementId), newMovement);
       toast.success(`${formType} logged successfully!`, { id: transToast });
       setIsFormOpen(false);
       setFormQty(0);

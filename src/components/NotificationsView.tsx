@@ -107,7 +107,7 @@ export default function NotificationsView({ user }: NotificationsViewProps) {
     });
 
     return unsub;
-  }, [user]);
+  }, [user.uid, user.role, user.country]);
 
   // Handle Mark as Read
   const handleMarkAsRead = (id: string) => {

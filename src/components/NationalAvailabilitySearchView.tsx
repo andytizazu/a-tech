@@ -210,6 +210,8 @@ export default function NationalAvailabilitySearchView({
     return unsub;
   }, []);
 
+  const ownerId = user.role === 'staff' ? (user.pharmacyId || user.uid) : user.uid;
+
   // Fetch Importers catalog (products)
   useEffect(() => {
     const q = query(
@@ -224,19 +226,25 @@ export default function NationalAvailabilitySearchView({
     return unsub;
   }, [user.country]);
 
-  // Fetch Pharmacy & Distributor stock (medicines)
+  // Fetch Pharmacy's own internal stock (scoped to tenant)
   useEffect(() => {
-    // Unrestricted queries with in-memory indexes allow seamless client filtering of big datasets
-    const q = query(collection(db, 'medicines'));
+    if (!ownerId) {
+      setLoading(false);
+      return;
+    }
+    const q = query(
+      collection(db, 'medicines'),
+      where('pharmacyId', '==', ownerId)
+    );
     const unsub = onSnapshot(q, (snapshot) => {
       setAllMedicines(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as InventoryProduct)));
       setLoading(false);
     }, (err) => {
-      console.error("Medicines ledger replication error: ", err);
+      console.warn("Medicines ledger query notice: ", err);
       setLoading(false);
     });
     return unsub;
-  }, []);
+  }, [ownerId]);
 
   // Compute Merged availability data with O(1) user profile mapping and calculated metrics
   const mergedDataset = useMemo(() => {
@@ -244,7 +252,7 @@ export default function NationalAvailabilitySearchView({
     const currentUserLat = user.latitude || 9.03;
     const currentUserLng = user.longitude || 38.74;
 
-    // 1. Process Importers products
+    // 1. Process Importers and Distributors marketplace products
     allProducts.forEach(prod => {
       const supplier = allUsers[prod.importerId];
       if (!supplier) return;
@@ -272,8 +280,8 @@ export default function NationalAvailabilitySearchView({
         description: prod.description,
         
         supplierId: prod.importerId,
-        supplierName: supplier.importerName || supplier.displayName || 'Federal Importer',
-        supplierRole: 'importer',
+        supplierName: supplier.importerName || supplier.distributorName || supplier.displayName || 'Federal Supplier',
+        supplierRole: supplier.role || 'importer',
         supplierVerification: supplier.verificationStatus || 'pending',
         supplierPhone: supplier.phone,
         supplierEmail: supplier.email,
@@ -288,69 +296,13 @@ export default function NationalAvailabilitySearchView({
         
         estimatedDeliveryDays: estDays,
         estimatedDeliveryFee: Math.round(deliveryFee),
-        deliveryMethod: 'both',
+        deliveryMethod: supplier.role === 'distributor' ? 'both' : 'delivery',
         sourceCollection: 'products'
       });
     });
 
-    // 2. Process Distributors & Pharmacies (medicines)
-    allMedicines.forEach(med => {
-      const supplier = allUsers[med.pharmacyId];
-      if (!supplier) return;
-
-      // Do not list own stock in search results
-      if (med.pharmacyId === user.uid || (user.pharmacyId && med.pharmacyId === user.pharmacyId)) {
-        return;
-      }
-
-      const distance = calculateDistance(currentUserLat, currentUserLng, supplier.latitude, supplier.longitude);
-
-      // Estimate Delivery
-      let estDays = 1;
-      let deliveryFee = 100; // Flat-rate B2B runner/logistic proxy
-      if (distance > 100) {
-        estDays = 3;
-        deliveryFee = 350;
-      } else if (distance > 15) {
-        estDays = 2;
-        deliveryFee = 200;
-      }
-
-      results.push({
-        id: med.id,
-        name: med.name,
-        category: med.category || 'Medicine',
-        price: med.price,
-        quantity: med.quantity ?? 0,
-        batchNumber: med.batchNumber,
-        expiryDate: med.expiryDate,
-        
-        supplierId: med.pharmacyId,
-        supplierName: supplier.role === 'distributor' 
-          ? (supplier.distributorName || supplier.displayName) 
-          : (supplier.pharmacyName || supplier.displayName),
-        supplierRole: supplier.role === 'distributor' ? 'distributor' : 'pharmacy',
-        supplierVerification: supplier.verificationStatus || 'pending',
-        supplierPhone: supplier.phone,
-        supplierEmail: supplier.email,
-        
-        country: supplier.country || 'Ethiopia',
-        region: supplier.region || 'Addis Ababa',
-        city: supplier.city || 'Addis Ababa',
-        address: supplier.address,
-        latitude: supplier.latitude,
-        longitude: supplier.longitude,
-        distanceKm: distance,
-        
-        estimatedDeliveryDays: estDays,
-        estimatedDeliveryFee: deliveryFee,
-        deliveryMethod: supplier.role === 'distributor' ? 'both' : 'pickup',
-        sourceCollection: 'medicines'
-      });
-    });
-
     return results;
-  }, [allProducts, allMedicines, allUsers, user]);
+  }, [allProducts, allUsers, user]);
 
   // Apply Search, Filters, Permissions and Optimizations on the computed unified dataset
   const filteredDataset = useMemo(() => {

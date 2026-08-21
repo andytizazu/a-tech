@@ -26,11 +26,14 @@ service cloud.firestore {
 
     function isAdmin() {
       return isAuthenticated() && (
+        ('role' in request.auth.token && (request.auth.token.role == "admin" || request.auth.token.role == "super_admin")) ||
+        (request.auth.token.get('admin', false) == true) ||
+        getRole() == "admin" ||
+        getRole() == "super_admin" ||
         ('email' in request.auth.token && (
           request.auth.token.email == "andualemtyb@gmail.com" || 
           request.auth.token.email == "atech2119@gmail.com"
-        )) ||
-        getRole() == "admin"
+        ))
       );
     }
 
@@ -38,104 +41,244 @@ service cloud.firestore {
       return isAuthenticated() && request.auth.uid == userId;
     }
 
+    // Verifies tenant membership (Direct tenant owner, authorized staff member, or Super Admin)
+    function isTenantMember(tenantId) {
+      return isAuthenticated() && (
+        tenantId == request.auth.uid ||
+        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && (
+          get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('pharmacyId', '') == tenantId ||
+          get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('importerId', '') == tenantId ||
+          get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('distributorId', '') == tenantId
+        )) ||
+        isAdmin()
+      );
+    }
+
     // Collection rules
     match /users/{uid} {
       allow read: if isAuthenticated();
-      allow create: if isAuthenticated() && (isOwner(uid) || isAdmin());
-      allow update: if isAuthenticated() && (isOwner(uid) || isAdmin());
-      allow delete: if isAdmin() || isOwner(uid);
+      allow create: if isAuthenticated() && (
+        isAdmin() || 
+        (isOwner(uid) && request.resource.data.get('role', '') != 'admin') || 
+        (request.resource.data.get('role', '') == 'staff' && (
+          request.resource.data.get('pharmacyId', '') == request.auth.uid ||
+          request.resource.data.get('importerId', '') == request.auth.uid ||
+          request.resource.data.get('distributorId', '') == request.auth.uid
+        ))
+      );
+      allow update: if isAuthenticated() && (
+        isAdmin() ||
+        (resource.data.get('role', '') == 'staff' && (
+          resource.data.get('pharmacyId', '') == request.auth.uid ||
+          resource.data.get('importerId', '') == request.auth.uid ||
+          resource.data.get('distributorId', '') == request.auth.uid
+        ) && request.resource.data.get('role', '') == 'staff') ||
+        (isOwner(uid) && 
+          request.resource.data.role == resource.data.role &&
+          request.resource.data.get('pharmacyId', '') == resource.data.get('pharmacyId', '') &&
+          request.resource.data.get('importerId', '') == resource.data.get('importerId', '') &&
+          request.resource.data.get('distributorId', '') == resource.data.get('distributorId', '') &&
+          request.resource.data.get('verificationStatus', resource.data.get('verificationStatus', 'pending')) == resource.data.get('verificationStatus', 'pending')
+        )
+      );
+      allow delete: if isAdmin() || isOwner(uid) || (
+        resource.data.get('role', '') == 'staff' && (
+          resource.data.get('pharmacyId', '') == request.auth.uid ||
+          resource.data.get('importerId', '') == request.auth.uid ||
+          resource.data.get('distributorId', '') == request.auth.uid
+        )
+      );
     }
 
+    // Private Pharmacy & Distributor Dispensing Inventory
     match /medicines/{id} {
-      allow read: if isAuthenticated();
-      allow write: if isAuthenticated();
+      allow read: if isTenantMember(resource.data.pharmacyId);
+      allow create: if isTenantMember(request.resource.data.pharmacyId);
+      allow update: if isTenantMember(resource.data.pharmacyId) && 
+        (!('pharmacyId' in request.resource.data) || request.resource.data.pharmacyId == resource.data.pharmacyId);
+      allow delete: if isTenantMember(resource.data.pharmacyId);
     }
 
+    // Pharmacy Branches
     match /branches/{id} {
-      allow read: if isAuthenticated();
-      allow write: if isAuthenticated();
+      allow read: if isTenantMember(resource.data.pharmacyId);
+      allow create: if isTenantMember(request.resource.data.pharmacyId);
+      allow update: if isTenantMember(resource.data.pharmacyId) && 
+        (!('pharmacyId' in request.resource.data) || request.resource.data.pharmacyId == resource.data.pharmacyId);
+      allow delete: if isTenantMember(resource.data.pharmacyId);
     }
 
+    // Pharmacy / Distributor Warehouses
     match /warehouses/{id} {
-      allow read: if isAuthenticated();
-      allow write: if isAuthenticated();
+      allow read: if isTenantMember(resource.data.pharmacyId) || isAdmin();
+      allow create: if isTenantMember(request.resource.data.pharmacyId);
+      allow update: if isTenantMember(resource.data.pharmacyId) && 
+        (!('pharmacyId' in request.resource.data) || request.resource.data.pharmacyId == resource.data.pharmacyId);
+      allow delete: if isTenantMember(resource.data.pharmacyId);
     }
 
+    // Warehouse Inventory Transactions
     match /warehouse_transactions/{id} {
-      allow read: if isAuthenticated();
-      allow write: if isAuthenticated();
+      allow read: if isTenantMember(resource.data.pharmacyId);
+      allow create: if isTenantMember(request.resource.data.pharmacyId);
+      allow update: if isTenantMember(resource.data.pharmacyId) && 
+        (!('pharmacyId' in request.resource.data) || request.resource.data.pharmacyId == resource.data.pharmacyId);
+      allow delete: if isTenantMember(resource.data.pharmacyId);
     }
 
+    // Branch-to-Branch Transfers
     match /transfers/{id} {
-      allow read: if isAuthenticated();
-      allow write: if isAuthenticated();
+      allow read: if isTenantMember(resource.data.pharmacyId);
+      allow create: if isTenantMember(request.resource.data.pharmacyId);
+      allow update: if isTenantMember(resource.data.pharmacyId) && 
+        (!('pharmacyId' in request.resource.data) || request.resource.data.pharmacyId == resource.data.pharmacyId);
+      allow delete: if isTenantMember(resource.data.pharmacyId);
     }
 
+    // POS Sales & Financial Records
     match /sales/{id} {
-      allow read: if isAuthenticated();
-      allow write: if isAuthenticated();
+      allow read: if isTenantMember(resource.data.pharmacyId);
+      allow create: if isTenantMember(request.resource.data.pharmacyId);
+      allow update: if isTenantMember(resource.data.pharmacyId) && 
+        (!('pharmacyId' in request.resource.data) || request.resource.data.pharmacyId == resource.data.pharmacyId);
+      allow delete: if isTenantMember(resource.data.pharmacyId);
     }
 
+    // Marketplace Products (Public wholesale catalog listings from Importers & Distributors)
     match /products/{id} {
       allow read: if isAuthenticated();
-      allow write: if isAuthenticated();
+      allow create: if isAuthenticated() && (
+        isTenantMember(request.resource.data.get('importerId', request.resource.data.get('pharmacyId', ''))) || 
+        isAdmin()
+      );
+      allow update: if isAuthenticated() && (
+        isTenantMember(resource.data.get('importerId', resource.data.get('pharmacyId', ''))) || 
+        isAdmin()
+      );
+      allow delete: if isAuthenticated() && (
+        isTenantMember(resource.data.get('importerId', resource.data.get('pharmacyId', ''))) || 
+        isAdmin()
+      );
     }
 
+    // B2B Wholesale Orders
     match /orders/{id} {
-      allow read: if isAuthenticated();
-      allow write: if isAuthenticated();
+      allow read: if isAuthenticated() && (
+        isTenantMember(resource.data.get('pharmacyId', '')) || 
+        isTenantMember(resource.data.get('importerId', '')) || 
+        isTenantMember(resource.data.get('distributorId', '')) || 
+        (resource.data.get('marketingId', '') == request.auth.uid) || 
+        isAdmin()
+      );
+      allow create: if isAuthenticated() && (
+        isTenantMember(request.resource.data.get('pharmacyId', '')) || 
+        isTenantMember(request.resource.data.get('importerId', '')) || 
+        isAdmin()
+      );
+      allow update: if isAuthenticated() && (
+        isTenantMember(resource.data.get('pharmacyId', '')) || 
+        isTenantMember(resource.data.get('importerId', '')) || 
+        isTenantMember(resource.data.get('distributorId', '')) || 
+        isAdmin()
+      );
+      allow delete: if isAdmin() || isTenantMember(resource.data.get('pharmacyId', ''));
     }
 
+    // Purchase Orders (Requisitions)
     match /purchase_orders/{id} {
-      allow read: if isAuthenticated();
-      allow write: if isAuthenticated();
+      allow read: if isTenantMember(resource.data.get('pharmacyId', '')) || 
+        (resource.data.get('importerId', '') != '' && isTenantMember(resource.data.get('importerId', ''))) || 
+        isAdmin();
+      allow create: if isTenantMember(request.resource.data.get('pharmacyId', '')) || isAdmin();
+      allow update: if isTenantMember(resource.data.get('pharmacyId', '')) || 
+        (resource.data.get('importerId', '') != '' && isTenantMember(resource.data.get('importerId', ''))) || 
+        isAdmin();
+      allow delete: if isTenantMember(resource.data.get('pharmacyId', '')) || isAdmin();
     }
 
+    // Pharmacy Registered Suppliers
     match /suppliers/{id} {
-      allow read: if isAuthenticated();
-      allow write: if isAuthenticated();
+      allow read: if isTenantMember(resource.data.pharmacyId);
+      allow create: if isTenantMember(request.resource.data.pharmacyId);
+      allow update: if isTenantMember(resource.data.pharmacyId) && 
+        (!('pharmacyId' in request.resource.data) || request.resource.data.pharmacyId == resource.data.pharmacyId);
+      allow delete: if isTenantMember(resource.data.pharmacyId);
     }
 
+    // Expiry Settings
     match /expiry_settings/{id} {
-      allow read: if isAuthenticated();
-      allow write: if isAuthenticated();
+      allow read: if isTenantMember(resource.data.get('pharmacyId', id));
+      allow write: if isTenantMember(request.resource.data.get('pharmacyId', id));
     }
 
+    // Global System Settings (Strictly Super Admin for Writes)
     match /system_settings/{id} {
       allow read: if isAuthenticated();
-      allow write: if isAuthenticated() || isAdmin();
+      allow write: if isAdmin();
     }
 
+    // Notifications
     match /notifications/{id} {
-      allow read: if isAuthenticated();
-      allow write: if isAuthenticated();
+      allow read: if isAuthenticated() && (
+        resource.data.get('userId', '') == request.auth.uid || 
+        resource.data.get('pharmacyId', '') == '' || 
+        isTenantMember(resource.data.get('pharmacyId', '')) || 
+        isAdmin()
+      );
+      allow create: if isAuthenticated() && (
+        isAdmin() ||
+        (request.resource.data.get('pharmacyId', '') != '' && isTenantMember(request.resource.data.get('pharmacyId', ''))) ||
+        request.resource.data.get('senderId', '') == request.auth.uid ||
+        request.resource.data.get('userId', '') == request.auth.uid
+      );
+      allow update, delete: if isAuthenticated() && (
+        isAdmin() ||
+        (resource.data.get('pharmacyId', '') != '' && isTenantMember(resource.data.get('pharmacyId', ''))) ||
+        resource.data.get('userId', '') == request.auth.uid
+      );
     }
 
+    // Audit Logs
     match /audit_logs/{id} {
-      allow read: if isAuthenticated();
-      allow write: if isAuthenticated();
+      allow read: if isTenantMember(resource.data.get('pharmacyId', '')) || isAdmin();
+      allow create: if isAuthenticated();
+      allow update, delete: if isAdmin();
     }
 
+    // Bin Card / Inventory Movements
     match /inventory_movements/{id} {
-      allow read: if isAuthenticated();
-      allow write: if isAuthenticated();
+      allow read: if isTenantMember(resource.data.pharmacyId);
+      allow create: if isTenantMember(request.resource.data.pharmacyId);
+      allow update: if isTenantMember(resource.data.pharmacyId) && 
+        (!('pharmacyId' in request.resource.data) || request.resource.data.pharmacyId == resource.data.pharmacyId);
+      allow delete: if isTenantMember(resource.data.pharmacyId);
     }
 
+    // Advertisements (Wholesale B2B)
     match /advertisements/{id} {
       allow read: if isAuthenticated();
-      allow write: if isAuthenticated() || isAdmin();
+      allow write: if isAuthenticated() && (
+        isTenantMember(request.resource.data.get('importerId', '')) || 
+        isAdmin()
+      );
     }
 
+    // SaaS Invoices
     match /saas_invoices/{id} {
-      allow read: if isAuthenticated();
-      allow write: if isAuthenticated() || isAdmin();
+      allow read: if isTenantMember(resource.data.get('pharmacyId', resource.data.get('userId', ''))) || isAdmin();
+      allow write: if isTenantMember(request.resource.data.get('pharmacyId', request.resource.data.get('userId', ''))) || isAdmin();
     }
 
+    // Pharmacy Customers
     match /customers/{id} {
-      allow read: if isAuthenticated();
-      allow write: if isAuthenticated();
+      allow read: if isTenantMember(resource.data.pharmacyId);
+      allow create: if isTenantMember(request.resource.data.pharmacyId);
+      allow update: if isTenantMember(resource.data.pharmacyId) && 
+        (!('pharmacyId' in request.resource.data) || request.resource.data.pharmacyId == resource.data.pharmacyId);
+      allow delete: if isTenantMember(resource.data.pharmacyId);
     }
 
+    // Wholesale Customers
     match /wholesale_customers/{id} {
       allow read: if isAuthenticated() && (resource == null || resource.data.wholesalerId == request.auth.uid || isAdmin());
       allow create: if isAuthenticated() && (request.resource.data.wholesalerId == request.auth.uid || isAdmin());
@@ -143,6 +286,7 @@ service cloud.firestore {
       allow delete: if isAdmin() || (isAuthenticated() && resource.data.wholesalerId == request.auth.uid);
     }
 
+    // Wholesale Private Sales
     match /wholesale_private_sales/{id} {
       allow read: if isAuthenticated() && (resource == null || resource.data.wholesalerId == request.auth.uid || isAdmin());
       allow create: if isAuthenticated() && (request.resource.data.wholesalerId == request.auth.uid || isAdmin());
@@ -150,19 +294,38 @@ service cloud.firestore {
       allow delete: if isAdmin() || (isAuthenticated() && resource.data.wholesalerId == request.auth.uid);
     }
 
+    // Marketing Invites
     match /marketing_invites/{id} {
       allow read: if isAuthenticated();
       allow write: if isAuthenticated();
     }
 
+    // P2P Sourcing Requests
     match /p2p_requests/{id} {
-      allow read: if isAuthenticated();
-      allow write: if isAuthenticated();
+      allow read: if isAuthenticated() && (
+        isTenantMember(resource.data.get('requesterPharmacyId', resource.data.get('pharmacyId', ''))) || 
+        isTenantMember(resource.data.get('supplierId', '')) || 
+        isAdmin()
+      );
+      allow create: if isAuthenticated() && (
+        isTenantMember(request.resource.data.get('requesterPharmacyId', request.resource.data.get('pharmacyId', ''))) || 
+        isAdmin()
+      );
+      allow update: if isAuthenticated() && (
+        isTenantMember(resource.data.get('requesterPharmacyId', resource.data.get('pharmacyId', ''))) || 
+        isTenantMember(resource.data.get('supplierId', '')) || 
+        isAdmin()
+      );
+      allow delete: if isAuthenticated() && (
+        isTenantMember(resource.data.get('requesterPharmacyId', resource.data.get('pharmacyId', ''))) || 
+        isAdmin()
+      );
     }
 
+    // Subscription History
     match /subscription_history/{id} {
-      allow read: if isAuthenticated();
-      allow write: if isAuthenticated() || isAdmin();
+      allow read: if isTenantMember(resource.data.get('pharmacyId', resource.data.get('userId', ''))) || isAdmin();
+      allow write: if isTenantMember(request.resource.data.get('pharmacyId', request.resource.data.get('userId', ''))) || isAdmin();
     }
   }
 }
