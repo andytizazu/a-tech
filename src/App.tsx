@@ -650,11 +650,14 @@ const Login = ({ onLoginSuccess }: { onLoginSuccess: (user: any) => void }) => {
   const [showTermsModal, setShowTermsModal] = useState(false);
   const [showPrivacyModal, setShowPrivacyModal] = useState(false);
   const [agreedToTerms, setAgreedToTerms] = useState(false);
+  const [popupBlockedError, setPopupBlockedError] = useState(false);
 
   // Marketing Agent Invitation States
   const [marketingInvite, setMarketingInvite] = useState<any | null>(null);
   const [inviteError, setInviteError] = useState<string | null>(null);
   const [inviteLoading, setInviteLoading] = useState(false);
+  const [invitedWholesalerId, setInvitedWholesalerId] = useState<string | null>(null);
+  const [invitedCustomerId, setInvitedCustomerId] = useState<string | null>(null);
   const [marketingForm, setMarketingForm] = useState({
     name: '',
     email: '',
@@ -671,6 +674,13 @@ const Login = ({ onLoginSuccess }: { onLoginSuccess: (user: any) => void }) => {
     const params = new URLSearchParams(window.location.search);
     const join = params.get('join');
     const inviteId = params.get('inviteId');
+    const refWholesale = params.get('refWholesale');
+    const inviteCustId = params.get('inviteCustId');
+
+    if (refWholesale && inviteCustId) {
+      setInvitedWholesalerId(refWholesale);
+      setInvitedCustomerId(inviteCustId);
+    }
 
     if (join === 'marketing' && inviteId) {
       setInviteLoading(true);
@@ -858,6 +868,7 @@ const Login = ({ onLoginSuccess }: { onLoginSuccess: (user: any) => void }) => {
     if (loading) return;
     
     setLoading(true);
+    setPopupBlockedError(false);
     const provider = new GoogleAuthProvider();
     const loginToast = toast.loading('Connecting to Google...');
     try {
@@ -885,8 +896,9 @@ const Login = ({ onLoginSuccess }: { onLoginSuccess: (user: any) => void }) => {
       let message = 'Google login failed';
       if (error.code === 'auth/network-request-failed') {
         message = 'Network error. Please check your connection and disable any ad-blockers.';
-      } else if (error.code === 'auth/popup-blocked') {
+      } else if (error.code === 'auth/popup-blocked' || error.message?.includes('popup-blocked') || errorMsg.includes('popup_blocked') || errorMsg.includes('popup blocker')) {
         message = 'The Google login popup was blocked by your browser. This is common in preview environments. Please try clicking the "open in a new tab" link at the bottom of the login form.';
+        setPopupBlockedError(true);
       } else if (error.code === 'auth/internal-error' || error.message?.includes('cookies')) {
         message = 'Third-party cookies might be blocked. Please enable them in your browser settings to use Google Login.';
       } else if (error.code === 'auth/operation-not-allowed') {
@@ -1446,6 +1458,34 @@ const Login = ({ onLoginSuccess }: { onLoginSuccess: (user: any) => void }) => {
           </div>
         </div>
 
+        {popupBlockedError && (
+          <div className="mb-4 p-4 bg-amber-50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-900/30 rounded-2xl text-left animate-in fade-in duration-300">
+            <div className="flex gap-2.5 items-start">
+              <AlertTriangle className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5 animate-bounce" />
+              <div className="space-y-1.5">
+                <h4 className="text-xs font-bold text-amber-800 dark:text-amber-400">
+                  Google Login Popup Blocked
+                </h4>
+                <p className="text-[10px] text-amber-700 dark:text-amber-500/90 leading-relaxed font-medium">
+                  Browsers block popups inside preview iframes due to standard iframe restrictions. To sign in:
+                </p>
+                <div className="flex flex-col gap-2 pt-1">
+                  <button
+                    type="button"
+                    onClick={() => window.open(window.location.href, '_blank')}
+                    className="px-3.5 py-2 bg-blue-600 hover:bg-blue-700 text-white text-[10px] font-bold rounded-xl shadow-sm self-start flex items-center gap-1.5 transition-all active:scale-95 cursor-pointer"
+                  >
+                    Open App in a New Tab
+                  </button>
+                  <span className="text-[9px] text-slate-400 dark:text-slate-500 italic">
+                    Or use Email/Password sign-in/sign-up above (works instantly inside the iframe!).
+                  </span>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
         <button
           onClick={handleGoogleLogin}
           type="button"
@@ -1575,7 +1615,7 @@ const SignupFlow = ({ user, onComplete, settings, initialProfile }: { user: any,
     region: initialProfile?.region || '',
     city: initialProfile?.city || '',
     referredBy: initialProfile?.referredBy || '',
-    subscriptionType: (initialProfile?.subscriptionType as 'basic' | 'standard' | 'premium') || 'basic'
+    subscriptionType: (initialProfile?.subscriptionType as 'standard' | 'premium') || 'standard'
   });
 
   const filteredCountries = countries.filter(c => 
@@ -1625,6 +1665,10 @@ const SignupFlow = ({ user, onComplete, settings, initialProfile }: { user: any,
       return;
     }
 
+    const params = new URLSearchParams(window.location.search);
+    const refWholesale = params.get('refWholesale');
+    const inviteCustId = params.get('inviteCustId');
+
     // Firestore has a 1MB limit for the entire document.
     // Check total size of uploaded files (Base64 is ~33% larger than binary)
     const totalSize = uploadedFiles.reduce((acc, f) => acc + f.data.length, 0);
@@ -1657,6 +1701,11 @@ const SignupFlow = ({ user, onComplete, settings, initialProfile }: { user: any,
         }
       }
 
+      const isPharmacy = formData.role === 'pharmacy';
+      const isDistributor = formData.role === 'distributor';
+      const durationDays = isPharmacy ? 30 : isDistributor ? 60 : 30;
+      const expiryDate = Date.now() + durationDays * 24 * 60 * 60 * 1000;
+
       const profile: UserProfile = {
         uid: user.uid,
         email: user.email || '',
@@ -1672,15 +1721,65 @@ const SignupFlow = ({ user, onComplete, settings, initialProfile }: { user: any,
         marketingId: marketingId || null,
         referrerUid: referrerUid as any, // Adding this to track p2p referrals
         referralCode: user.uid.slice(0, 8).toUpperCase(), // Unique code for this user
-        subscriptionType: formData.subscriptionType,
+        subscriptionType: isDistributor ? ('distributor' as any) : formData.subscriptionType,
         subscriptionStatus: 'active',
+        subscriptionExpiryDate: expiryDate,
+        lastSubscriptionPaymentDate: Date.now(),
+        isFreeTrial: isPharmacy || isDistributor,
         verificationStatus: 'pending',
         verificationDocs: uploadedFiles.map(f => f.data),
+        invitedWholesalerId: refWholesale || null,
+        invitedCustomerId: inviteCustId || null,
         createdAt: Date.now()
       };
       
       console.log('Saving profile for UID:', user.uid);
       await setDoc(doc(db, 'users', user.uid), profile);
+
+      if (isPharmacy || isDistributor) {
+        // Create the free trial subscription record in saas_invoices
+        const dateObj = new Date();
+        const billingPeriod = dateObj.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+        const invoiceId = `trial_${user.uid}_${Date.now()}`;
+        
+        const trialRecord = {
+          id: invoiceId,
+          pharmacyId: user.uid,
+          pharmacyName: profile.pharmacyName || profile.distributorName || profile.displayName || (isPharmacy ? 'SaaS Pharmacy' : 'Distributor Partner'),
+          plan: isPharmacy ? 'Pharmacy Free Trial (30 Days)' : 'Distributor Free Trial (60 Days)',
+          basePrice: 0,
+          additionalBranchesCount: 0,
+          additionalBranchFee: 0,
+          additionalCharges: 0,
+          discountPercent: 0,
+          totalAmount: 0,
+          vatAmount: 0,
+          subtotal: 0,
+          currency: 'ETB',
+          status: 'active',
+          paymentStatus: 'Free Trial',
+          paymentAmount: 0,
+          subscriptionType: isPharmacy ? 'Pharmacy Free Trial (30 Days)' : 'Distributor Free Trial (60 Days)',
+          paymentMethod: 'System Generated',
+          billingPeriod: billingPeriod,
+          createdAt: Date.now(),
+          updatedAt: Date.now()
+        };
+        await setDoc(doc(db, 'saas_invoices', invoiceId), trialRecord);
+
+        // Record Initial Free Trial in subscription history
+        const historyId = `history_trial_${user.uid}_${Date.now()}`;
+        await setDoc(doc(db, 'subscription_history', historyId), {
+          id: historyId,
+          orgId: user.uid,
+          date: Date.now(),
+          action: 'Initial Free Trial',
+          months: isPharmacy ? '+1' : '+2',
+          performedBy: 'System',
+          reason: isPharmacy ? 'Pharmacy onboarding 1-month free trial' : 'Distributor onboarding 2-month free trial'
+        });
+      }
+
       toast.success('Application submitted!', { id: completeToast });
       onComplete();
     } catch (error: any) {
@@ -1875,27 +1974,19 @@ const SignupFlow = ({ user, onComplete, settings, initialProfile }: { user: any,
           {step === 3 && (
             <div className="space-y-6">
               <h3 className="text-xl font-bold text-slate-900 dark:text-white">Subscription Plan</h3>
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 max-w-2xl mx-auto">
                 {[
                   { 
-                    id: 'basic', 
-                    name: 'Basic', 
-                    price: `${settings?.planPrices?.basic || PLAN_PRICES.basic} ETB`, 
+                    id: 'standard', 
+                    name: 'Professional (Standard)', 
+                    price: `${settings?.planPrices?.standard || PLAN_PRICES.standard} ETB`, 
                     features: [
                       'Inventory Management', 
                       'Sales & POS Billing', 
                       'Expiry Date Alerts', 
                       'Standard Bin Card Logging', 
                       'Conversion Factors Audit',
-                      'Receipt/Invoice Printing'
-                    ] 
-                  },
-                  { 
-                    id: 'standard', 
-                    name: 'Professional', 
-                    price: `${settings?.planPrices?.standard || PLAN_PRICES.standard} ETB`, 
-                    features: [
-                      'Everything in Basic Plan', 
+                      'Receipt/Invoice Printing',
                       'Multiple Branch Registry', 
                       'Branch Inventory Visibility', 
                       'Branch Billing Controls', 
@@ -2153,7 +2244,7 @@ const AdminVerificationView = () => {
     });
 
     // Listen for subscription change requests
-    const q2 = query(collection(db, 'users'), where('pendingSubscriptionType', 'in', ['basic', 'standard', 'premium']));
+    const q2 = query(collection(db, 'users'), where('pendingSubscriptionType', 'in', ['standard', 'premium']));
     const unsub2 = onSnapshot(q2, (snapshot) => {
       setSubscriptionRequests(snapshot.docs.map(doc => ({ uid: doc.id, ...doc.data() } as UserProfile)));
     }, (error) => {
@@ -2564,17 +2655,26 @@ const AdminVerificationView = () => {
 };
 
 const PLAN_PRICES = {
-  basic: 400,
   standard: 1200,
   premium: 3000
 };
 
-const SubscriptionLock = ({ user, onRenew, settings }: { user: UserProfile, onRenew: () => void, settings: SystemSettings | null }) => {
+const SubscriptionLock = ({ 
+  user, 
+  onRenew, 
+  settings,
+  isSuspended = false
+}: { 
+  user: UserProfile, 
+  onRenew: () => void, 
+  settings: SystemSettings | null,
+  isSuspended?: boolean
+}) => {
   const [months, setMonths] = useState(1);
   const [isProcessing, setIsProcessing] = useState(false);
   
-  const currentPlan = user.subscriptionType || 'basic';
-  const pricePerMonth = (settings?.planPrices?.[currentPlan as keyof typeof PLAN_PRICES]) ?? PLAN_PRICES[currentPlan as keyof typeof PLAN_PRICES];
+  const currentPlan = user.subscriptionType || 'standard';
+  const pricePerMonth = (settings?.planPrices?.[currentPlan as keyof typeof PLAN_PRICES]) ?? (PLAN_PRICES[currentPlan as keyof typeof PLAN_PRICES] || 1200);
   const total = pricePerMonth * months;
 
   const handlePay = async () => {
@@ -2605,40 +2705,50 @@ const SubscriptionLock = ({ user, onRenew, settings }: { user: UserProfile, onRe
         <div className="w-20 h-20 bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400 rounded-3xl flex items-center justify-center mx-auto mb-6">
           <ShieldAlert size={40} />
         </div>
-        <h2 className="text-2xl font-black text-slate-900 dark:text-white text-center mb-2">Subscription Expired</h2>
-        <p className="text-slate-500 dark:text-slate-400 text-center mb-8">Your access to the system has been suspended. Please renew your subscription to continue.</p>
+        <h2 className="text-2xl font-black text-slate-900 dark:text-white text-center mb-2">
+          {isSuspended ? 'Account Suspended' : 'Subscription Expired'}
+        </h2>
+        <p className="text-slate-500 dark:text-slate-400 text-center mb-8">
+          {isSuspended 
+            ? 'Your organization has been suspended by the administrator. Please contact customer support to resolve outstanding issues.'
+            : 'Your access to the system has been suspended. Please renew your subscription to continue.'}
+        </p>
         
-        <div className="bg-slate-50 dark:bg-slate-800/50 p-6 rounded-3xl mb-8">
-          <div className="flex justify-between items-center mb-4">
-            <span className="text-sm font-bold text-slate-500 dark:text-slate-400 uppercase">Plan</span>
-            <span className="font-black text-blue-600 dark:text-blue-400 uppercase">{currentPlan}</span>
+        {!isSuspended && (
+          <div className="bg-slate-50 dark:bg-slate-800/50 p-6 rounded-3xl mb-8">
+            <div className="flex justify-between items-center mb-4">
+              <span className="text-sm font-bold text-slate-500 dark:text-slate-400 uppercase">Plan</span>
+              <span className="font-black text-blue-600 dark:text-blue-400 uppercase">{currentPlan}</span>
+            </div>
+            <div className="flex justify-between items-center mb-6">
+              <span className="text-sm font-bold text-slate-500 dark:text-slate-400 uppercase">Duration</span>
+              <select 
+                value={months} 
+                onChange={(e) => setMonths(parseInt(e.target.value))}
+                className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-1 font-bold text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              >
+                {[1, 3, 6, 12].map(m => (
+                  <option key={m} value={m}>{m} Month{m > 1 ? 's' : ''}</option>
+                ))}
+              </select>
+            </div>
+            <div className="pt-4 border-t border-slate-200 dark:border-slate-700 flex justify-between items-center">
+              <span className="text-sm font-bold text-slate-900 dark:text-white uppercase">Total Amount</span>
+              <span className="text-2xl font-black text-slate-900 dark:text-white">{total.toLocaleString()} ETB</span>
+            </div>
           </div>
-          <div className="flex justify-between items-center mb-6">
-            <span className="text-sm font-bold text-slate-500 dark:text-slate-400 uppercase">Duration</span>
-            <select 
-              value={months} 
-              onChange={(e) => setMonths(parseInt(e.target.value))}
-              className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-1 font-bold text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-            >
-              {[1, 3, 6, 12].map(m => (
-                <option key={m} value={m}>{m} Month{m > 1 ? 's' : ''}</option>
-              ))}
-            </select>
-          </div>
-          <div className="pt-4 border-t border-slate-200 dark:border-slate-700 flex justify-between items-center">
-            <span className="text-sm font-bold text-slate-900 dark:text-white uppercase">Total Amount</span>
-            <span className="text-2xl font-black text-slate-900 dark:text-white">{total.toLocaleString()} ETB</span>
-          </div>
-        </div>
+        )}
 
-        <button 
-          onClick={handlePay}
-          disabled={isProcessing}
-          className="w-full bg-blue-600 text-white py-4 rounded-2xl font-bold hover:bg-blue-700 transition-all shadow-lg shadow-blue-100 dark:shadow-none flex items-center justify-center gap-2 disabled:opacity-50"
-        >
-          {isProcessing ? <Clock className="animate-spin" size={20} /> : <CreditCard size={20} />}
-          {isProcessing ? 'Processing...' : 'Pay & Reactivate'}
-        </button>
+        {!isSuspended && (
+          <button 
+            onClick={handlePay}
+            disabled={isProcessing}
+            className="w-full bg-blue-600 text-white py-4 rounded-2xl font-bold hover:bg-blue-700 transition-all shadow-lg shadow-blue-100 dark:shadow-none flex items-center justify-center gap-2 disabled:opacity-50"
+          >
+            {isProcessing ? <Clock className="animate-spin" size={20} /> : <CreditCard size={20} />}
+            {isProcessing ? 'Processing...' : 'Pay & Reactivate'}
+          </button>
+        )}
         
         <button 
           onClick={() => auth.signOut()}
@@ -2661,37 +2771,16 @@ const SubscriptionViewOld = ({ user, settings, language = 'en' }: { user: UserPr
   };
 
   const getPlanPrice = (planId: string) => {
-    return (settings?.planPrices?.[planId as keyof typeof PLAN_PRICES]) ?? PLAN_PRICES[planId as keyof typeof PLAN_PRICES];
+    return (settings?.planPrices?.[planId as keyof typeof PLAN_PRICES]) ?? (PLAN_PRICES[planId as keyof typeof PLAN_PRICES] || 1200);
   };
 
   const plans = [
     { 
-      id: 'basic', 
-      name: t('basic') || 'Basic', 
-      price: getPlanPrice('basic') === 0 ? 'Free' : `${getPlanPrice('basic')} ETB/mo`, 
-      features: [
-        'Add/Edit/Delete products',
-        'Basic inventory tracking',
-        'Low stock alerts',
-        'Expiry tracking',
-        'Record sales',
-        'Basic profit calculation'
-      ],
-      limitations: [
-        'Max 200 products limit',
-        'No PDF reports & printable receipts',
-        'No Importer Marketplace access',
-        'No customer tracking & records',
-        'No advanced market trends',
-        'No smart bulk-purchase reorders'
-      ]
-    },
-    { 
       id: 'standard', 
-      name: t('standard') || 'Standard', 
+      name: t('standard') || 'Standard (Professional)', 
       price: `${getPlanPrice('standard')} ETB/mo`, 
       features: [
-        'Everything in Basic',
+        'Inventory Management & POS Billing',
         'Unlimited products catalog',
         'PDF receipts & reports',
         'Sales history logs',
@@ -2725,12 +2814,17 @@ const SubscriptionViewOld = ({ user, settings, language = 'en' }: { user: UserPr
 
   const handleRequestUpgrade = async (planId: string) => {
     try {
+      const expiryDate = Date.now() + (30 * 24 * 60 * 60 * 1000); // 30 days free/active
       await updateDoc(doc(db, 'users', user.uid), { 
-        pendingSubscriptionType: planId 
+        subscriptionType: planId,
+        subscriptionStatus: 'active',
+        subscriptionExpiryDate: expiryDate,
+        pendingSubscriptionType: null
       });
-      toast.success('Upgrade request sent to admin!');
+      toast.success(`Successfully activated ${planId.toUpperCase()} subscription!`);
     } catch (error) {
-      toast.error('Failed to send request');
+      console.error('Failed to upgrade subscription:', error);
+      toast.error('Failed to upgrade subscription');
     }
   };
 
@@ -2822,7 +2916,7 @@ const SubscriptionViewOld = ({ user, settings, language = 'en' }: { user: UserPr
               <div className="flex justify-between items-center">
                 <span className="text-sm font-bold text-slate-400 uppercase">Total</span>
                 <span className="font-black text-slate-900 dark:text-white">
-                  {(getPlanPrice(user.subscriptionType || 'basic') * renewalMonths).toLocaleString()} ETB
+                  {(getPlanPrice(user.subscriptionType || 'standard') * renewalMonths).toLocaleString()} ETB
                 </span>
               </div>
             </div>
@@ -2839,7 +2933,7 @@ const SubscriptionViewOld = ({ user, settings, language = 'en' }: { user: UserPr
         </div>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-8 max-w-4xl mx-auto">
         {plans.map((plan) => (
           <div key={plan.id} className={`bg-white dark:bg-slate-900 p-8 rounded-3xl border-2 transition-all flex flex-col ${user.subscriptionType === plan.id ? 'border-blue-600 shadow-xl' : 'border-slate-100 dark:border-slate-800 hover:border-slate-200 dark:hover:border-slate-700'}`}>
             <div className="mb-6">
@@ -4637,7 +4731,7 @@ const AdminUserManagement = () => {
     }
   };
 
-  const handleSubscriptionUpdate = async (uid: string, type: 'basic' | 'standard' | 'premium', status: 'active' | 'expired') => {
+  const handleSubscriptionUpdate = async (uid: string, type: 'standard' | 'premium', status: 'active' | 'expired') => {
     try {
       const userToUpdate = users.find(u => u.uid === uid);
       const isUpgrade = userToUpdate && userToUpdate.subscriptionType !== type && status === 'active';
@@ -4662,14 +4756,14 @@ const AdminUserManagement = () => {
 
       // Credit marketing commission if it's an upgrade and user was referred
       if (isUpgrade && userToUpdate.marketingId && settings?.marketingCommission) {
-        const { durationMonths, basicPlanRate, standardPlanRate, premiumPlanRate } = settings.marketingCommission;
+        const { durationMonths, standardPlanRate, premiumPlanRate } = settings.marketingCommission;
         
         // Check if commission is still active
         const expiryDate = new Date(userToUpdate.createdAt);
         expiryDate.setMonth(expiryDate.getMonth() + durationMonths);
         
         if (Date.now() < expiryDate.getTime()) {
-          const rate = type === 'premium' ? premiumPlanRate : (type === 'standard' ? standardPlanRate : (type === 'basic' ? basicPlanRate : 0));
+          const rate = type === 'premium' ? premiumPlanRate : standardPlanRate;
           if (rate > 0) {
             const marketingRef = doc(db, 'users', userToUpdate.marketingId);
             const marketingDoc = await getDoc(marketingRef);
@@ -4711,6 +4805,11 @@ const AdminUserManagement = () => {
       // Actually, I'll just warn the user that for a production app we'd use a Cloud Function.
       // For now, I'll use a unique ID and the user will have to sign up with the SAME email.
       const tempId = `manual_${Date.now()}`;
+      const isPharmacy = newUser.role === 'pharmacy';
+      const isDistributor = newUser.role === 'distributor';
+      const durationDays = isPharmacy ? 30 : isDistributor ? 60 : 30;
+      const expiryDate = Date.now() + durationDays * 24 * 60 * 60 * 1000;
+
       const userProfile: UserProfile = {
         uid: tempId,
         email: newUser.email,
@@ -4719,16 +4818,50 @@ const AdminUserManagement = () => {
         country: newUser.country,
         city: newUser.city,
         verificationStatus: 'approved',
-        subscriptionType: 'basic',
+        subscriptionType: isDistributor ? ('distributor' as any) : 'standard',
         subscriptionStatus: 'active',
-        subscriptionExpiryDate: Date.now() + (30 * 24 * 60 * 60 * 1000),
+        subscriptionExpiryDate: expiryDate,
+        lastSubscriptionPaymentDate: Date.now(),
+        isFreeTrial: isPharmacy || isDistributor,
         createdAt: Date.now()
       };
 
-      if (newUser.role === 'pharmacy') userProfile.pharmacyName = newUser.businessName;
+      if (isPharmacy) userProfile.pharmacyName = newUser.businessName;
       if (newUser.role === 'importer') userProfile.importerName = newUser.businessName;
+      if (isDistributor) userProfile.distributorName = newUser.businessName;
 
       await setDoc(doc(db, 'users', tempId), userProfile);
+
+      if (isPharmacy || isDistributor) {
+        const dateObj = new Date();
+        const billingPeriod = dateObj.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+        const invoiceId = `trial_${tempId}_${Date.now()}`;
+        
+        await setDoc(doc(db, 'saas_invoices', invoiceId), {
+          id: invoiceId,
+          pharmacyId: tempId,
+          pharmacyName: newUser.businessName || newUser.displayName || (isPharmacy ? 'SaaS Pharmacy' : 'Distributor Partner'),
+          plan: isPharmacy ? 'Pharmacy Free Trial (30 Days)' : 'Distributor Free Trial (60 Days)',
+          basePrice: 0,
+          additionalBranchesCount: 0,
+          additionalBranchFee: 0,
+          additionalCharges: 0,
+          discountPercent: 0,
+          totalAmount: 0,
+          vatAmount: 0,
+          subtotal: 0,
+          currency: 'ETB',
+          status: 'active',
+          paymentStatus: 'Free Trial',
+          paymentAmount: 0,
+          subscriptionType: isPharmacy ? 'Pharmacy Free Trial (30 Days)' : 'Distributor Free Trial (60 Days)',
+          paymentMethod: 'System Generated',
+          billingPeriod: billingPeriod,
+          createdAt: Date.now(),
+          updatedAt: Date.now()
+        });
+      }
+
       toast.success('User profile created! User must sign up with this email to link account.');
       setShowAddModal(false);
       setNewUser({
@@ -4880,11 +5013,10 @@ const AdminUserManagement = () => {
                       <div className="flex flex-col gap-1">
                         <div className="flex items-center gap-1">
                           <select 
-                            value={editingUsers[u.uid]?.type || u.subscriptionType || 'basic'} 
+                            value={editingUsers[u.uid]?.type || u.subscriptionType || 'standard'} 
                             onChange={(e) => setEditingUsers({...editingUsers, [u.uid]: { type: e.target.value, status: editingUsers[u.uid]?.status || u.subscriptionStatus || 'active' }})}
                             className="text-[10px] font-bold bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded px-1 py-0.5 outline-none focus:ring-1 focus:ring-blue-500 dark:text-white"
                           >
-                            <option value="basic">BASIC</option>
                             <option value="standard">STANDARD</option>
                             <option value="premium">PREMIUM</option>
                           </select>
@@ -4914,7 +5046,7 @@ const AdminUserManagement = () => {
                         <div className="flex items-center gap-2">
                           <select 
                             value={editingUsers[u.uid]?.status || u.subscriptionStatus || 'expired'} 
-                            onChange={(e) => setEditingUsers({...editingUsers, [u.uid]: { status: e.target.value, type: editingUsers[u.uid]?.type || u.subscriptionType || 'basic' }})}
+                            onChange={(e) => setEditingUsers({...editingUsers, [u.uid]: { status: e.target.value, type: editingUsers[u.uid]?.type || u.subscriptionType || 'standard' }})}
                             className={`text-[9px] font-bold border rounded px-1 py-0.5 outline-none ${(editingUsers[u.uid]?.status || u.subscriptionStatus) === 'active' ? 'bg-green-50 dark:bg-green-900/20 text-green-600 border-green-200 dark:border-green-800' : 'bg-red-50 dark:bg-red-900/20 text-red-600 border-red-200 dark:border-red-800'}`}
                           >
                             <option value="active">ACTIVE</option>
@@ -5121,9 +5253,9 @@ const AdminRevenuePanel = ({ settings }: { settings: SystemSettings | null }) =>
   }, []);
 
   const totalCommission = orders.reduce((sum, o) => sum + (o.commissionAmount || 0), 0);
-  const activeSubs = users.filter(u => u.subscriptionStatus === 'active').length;
+  const activeSubs = users.filter(u => (u.role === 'pharmacy' || u.role === 'importer' || u.role === 'distributor') && u.subscriptionStatus === 'active').length;
   const subscriptionIncome = users
-    .filter(u => u.subscriptionStatus === 'active')
+    .filter(u => (u.role === 'pharmacy' || u.role === 'importer' || u.role === 'distributor') && u.subscriptionStatus === 'active')
     .reduce((sum, u) => {
       const plan = u.subscriptionType || 'basic';
       const price = (settings?.planPrices?.[plan as keyof typeof PLAN_PRICES]) ?? PLAN_PRICES[plan as keyof typeof PLAN_PRICES];
@@ -6204,9 +6336,9 @@ const Sidebar = ({
   const menuItems = [
     { id: 'dashboard', label: t('dashboard'), icon: LayoutDashboard, roles: ['admin', 'pharmacy', 'importer', 'regional_manager', 'staff', 'marketing', 'distributor'] },
     { id: 'inventory', label: t('inventory'), icon: Package, roles: ['pharmacy', 'staff'] },
-    { id: 'bincard', label: t('bincard'), icon: FileText, roles: ['pharmacy', 'staff'], minPlan: 'basic' },
-    { id: 'expiry', label: t('expiry'), icon: Clock, roles: ['pharmacy', 'staff'], minPlan: 'basic' },
-    { id: 'forecasting', label: t('forecasting'), icon: TrendingUp, roles: ['pharmacy', 'staff'], minPlan: 'basic' },
+    { id: 'bincard', label: t('bincard'), icon: FileText, roles: ['pharmacy', 'staff'], minPlan: 'standard' },
+    { id: 'expiry', label: t('expiry'), icon: Clock, roles: ['pharmacy', 'staff'], minPlan: 'standard' },
+    { id: 'forecasting', label: t('forecasting'), icon: TrendingUp, roles: ['pharmacy', 'staff'], minPlan: 'standard' },
     { id: 'my-products', label: (role === 'importer' || role === 'distributor') ? 'Products' : t('my-products'), icon: Box, roles: ['importer', 'distributor', 'staff'] },
     { id: 'sales', label: t('sales'), icon: ShoppingCart, roles: ['pharmacy', 'staff'] },
     { id: 'customers', label: (role === 'importer' || role === 'distributor') ? 'Customers' : t('customers'), icon: Users, roles: ['pharmacy', 'staff'] },
@@ -6214,7 +6346,8 @@ const Sidebar = ({
     { id: 'analytics', label: 'Analytics Insights', icon: TrendingUp, roles: ['importer', 'distributor'] },
     { id: 'marketplace', label: t('marketplace'), icon: Truck, roles: ['pharmacy', 'admin', 'staff'], minPlan: 'standard' },
     { id: 'orders', label: (role === 'importer' || role === 'distributor') ? 'Orders' : t('orders'), icon: ShoppingCart, roles: ['pharmacy', 'importer', 'distributor', 'staff'], minPlan: 'standard' },
-    { id: 'procurement', label: 'Procurement (PR & PO)', icon: Layers, roles: ['pharmacy', 'staff'], minPlan: 'basic' },
+    { id: 'customer-management', label: 'Customer Management', icon: Users, roles: ['importer', 'distributor'] },
+    { id: 'procurement', label: 'Procurement (PR & PO)', icon: Layers, roles: ['pharmacy', 'staff'], minPlan: 'standard' },
     { id: 'warehouses', label: 'Warehouses', icon: WarehouseIcon, roles: ['pharmacy', 'importer', 'distributor', 'staff'], minPlan: 'standard' },
     { id: 'deliveries', label: 'Delivery & Shipping', icon: Truck, roles: ['importer', 'distributor'] },
     { id: 'advertising', label: (role === 'importer' || role === 'distributor') ? 'Promotions' : t('advertising'), icon: Tag, roles: ['importer', 'distributor'] },
@@ -6258,10 +6391,9 @@ const Sidebar = ({
       if (!hasFeature(user, item.id, settings)) return false;
     }
 
-    // Hide subscription tab if they did not pay for the future
+    // Hide subscription tab if inactive
     if (item.id === 'subscription' && (role === 'pharmacy' || role === 'staff')) {
-      const plan = user.subscriptionType || 'basic';
-      if (plan === 'basic' || user.subscriptionStatus !== 'active') {
+      if (user.subscriptionStatus !== 'active') {
         return false;
       }
     }
@@ -6831,7 +6963,7 @@ const DashboardView = ({
         const users = snapshot.docs.map(d => d.data() as UserProfile);
         const pharmacies = users.filter(u => u.role === 'pharmacy').length;
         const importers = users.filter(u => u.role === 'importer').length;
-        const activeSubs = users.filter(u => u.subscriptionStatus === 'active').length;
+        const activeSubs = users.filter(u => (u.role === 'pharmacy' || u.role === 'importer' || u.role === 'distributor') && u.subscriptionStatus === 'active').length;
         setStats(prev => ({ 
           ...prev, 
           users: users.length, 
@@ -11986,13 +12118,111 @@ const SalesView = ({
   );
 };
 
+// --- Subscription Status Info Helper ---
+export const getSubscriptionStatusInfo = (profile: UserProfile | null, previewRestrictedMode = false) => {
+  if (!profile) return { isExpired: false, isReadOnlyMode: false, isHardLocked: false };
+  
+  // If we are admin AND we are NOT in preview restricted mode, we bypass ALL locks
+  if (profile.role === 'admin' && !previewRestrictedMode) {
+    return { isExpired: false, isReadOnlyMode: false, isHardLocked: false };
+  }
+
+  // If immediateLock is enabled, it's a hard lock
+  if (profile.immediateLock) {
+    return { isExpired: true, isReadOnlyMode: false, isHardLocked: true };
+  }
+
+  // If suspended, it's a hard lock
+  if (profile.verificationStatus === 'suspended') {
+    return { isExpired: true, isReadOnlyMode: false, isHardLocked: true };
+  }
+
+  const expiry = profile.subscriptionExpiryDate;
+  if (!expiry) return { isExpired: false, isReadOnlyMode: false, isHardLocked: false };
+
+  const now = Date.now();
+  if (now <= expiry) {
+    return { isExpired: false, isReadOnlyMode: false, isHardLocked: false };
+  }
+
+  // It is expired! Is Read-Only Mode enabled?
+  const readOnlyEnabled = profile.readOnlyEnabled !== false; // Default to true
+  if (!readOnlyEnabled) {
+    // If read only is disabled, they get hard locked immediately on expiration
+    return { isExpired: true, isReadOnlyMode: false, isHardLocked: true };
+  }
+
+  // Read-only is enabled. Is it within the grace period?
+  const graceDays = profile.gracePeriodDays !== undefined ? profile.gracePeriodDays : 30; // Default to 30 days
+  if (graceDays === 'unlimited') {
+    return { isExpired: true, isReadOnlyMode: true, isHardLocked: false };
+  }
+
+  const graceMs = (graceDays as number) * 24 * 60 * 60 * 1000;
+  if (now <= expiry + graceMs) {
+    return { isExpired: true, isReadOnlyMode: true, isHardLocked: false };
+  }
+
+  // Grace period exceeded! Hard lock.
+  return { isExpired: true, isReadOnlyMode: false, isHardLocked: true };
+};
+
 // --- Main App ---
 
 export default function App() {
   const [user, setUser] = useState<any>(null);
   const [profile, setProfile] = useState<UserProfile | null>(null);
+  const [adminProfile, setAdminProfile] = useState<UserProfile | null>(null);
+  const [impersonatedUser, setImpersonatedUser] = useState<UserProfile | null>(null);
+  const [previewRestrictedMode, setPreviewRestrictedMode] = useState<boolean>(false);
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState('dashboard');
+
+  const isRoleAllowedForTab = (tabId: string, userRole: string): boolean => {
+    if (userRole === 'admin') return true;
+
+    const allowedRoles: Record<string, string[]> = {
+      dashboard: ['admin', 'pharmacy', 'importer', 'regional_manager', 'staff', 'marketing', 'distributor'],
+      inventory: ['pharmacy', 'staff'],
+      bincard: ['pharmacy', 'staff'],
+      expiry: ['pharmacy', 'staff'],
+      forecasting: ['pharmacy', 'staff'],
+      'my-products': ['importer', 'distributor', 'staff'],
+      sales: ['pharmacy', 'staff'],
+      customers: ['pharmacy', 'staff'],
+      suppliers: ['pharmacy', 'staff'],
+      analytics: ['importer', 'distributor'],
+      marketplace: ['pharmacy', 'admin', 'staff'],
+      orders: ['pharmacy', 'importer', 'distributor', 'staff'],
+      procurement: ['pharmacy', 'staff'],
+      warehouses: ['pharmacy', 'importer', 'distributor', 'staff'],
+      deliveries: ['importer', 'distributor'],
+      advertising: ['importer', 'distributor'],
+      reports: ['importer', 'distributor'],
+      staff: ['pharmacy', 'importer', 'distributor', 'staff'],
+      branches: ['pharmacy', 'staff'],
+      subscription: ['pharmacy', 'importer', 'distributor'],
+      notifications: ['pharmacy', 'importer', 'regional_manager', 'staff', 'marketing', 'distributor'],
+      settings: ['admin', 'pharmacy', 'importer', 'regional_manager', 'staff', 'marketing', 'distributor']
+    };
+
+    if (tabId.startsWith('super-admin') || tabId.startsWith('admin-') || tabId === 'users') {
+      return userRole === 'admin';
+    }
+
+    if (allowedRoles[tabId]) {
+      return allowedRoles[tabId].includes(userRole);
+    }
+
+    return true;
+  };
+
+  // Automatically redirect user to dashboard if they are on a tab that their role does not permit
+  useEffect(() => {
+    if (profile && !isRoleAllowedForTab(activeTab, profile.role)) {
+      setActiveTab('dashboard');
+    }
+  }, [profile, activeTab]);
   const [systemSettings, setSystemSettings] = useState<SystemSettings | null>(null);
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(true);
 
@@ -12266,29 +12496,43 @@ export default function App() {
               }
 
               // Normalize subscriptionType to exact standard/premium in UI
-              const subTypeStr = String(profileData.subscriptionType || 'basic').toLowerCase();
-              if (subTypeStr.includes('premium') || subTypeStr.includes('enterprise')) {
+              let subType = profileData.subscriptionType || 'standard';
+              if (profileData.pendingSubscriptionType) {
+                subType = profileData.pendingSubscriptionType;
+                profileData.subscriptionStatus = 'active';
+              }
+              const subTypeStr = String(subType).toLowerCase();
+              if (profileData.role === 'distributor' || profileData.role === 'importer') {
+                profileData.subscriptionType = 'distributor' as any;
+                if (docSnap.data().subscriptionType !== 'distributor') {
+                  updateDoc(doc(db, 'users', u.uid), { subscriptionType: 'distributor' }).catch(err => console.error(err));
+                }
+              } else if (subTypeStr.includes('premium') || subTypeStr.includes('enterprise')) {
                 profileData.subscriptionType = 'premium';
-              } else if (subTypeStr.includes('standard') || subTypeStr.includes('professional') || subTypeStr.includes('pro')) {
-                profileData.subscriptionType = 'standard';
               } else {
-                profileData.subscriptionType = 'basic';
+                profileData.subscriptionType = 'standard';
               }
 
               const pendingSubTypeStr = String(profileData.pendingSubscriptionType || '').toLowerCase();
               if (pendingSubTypeStr) {
                 if (pendingSubTypeStr.includes('premium') || pendingSubTypeStr.includes('enterprise')) {
                   profileData.pendingSubscriptionType = 'premium';
-                } else if (pendingSubTypeStr.includes('standard') || pendingSubTypeStr.includes('professional') || pendingSubTypeStr.includes('pro')) {
-                  profileData.pendingSubscriptionType = 'standard';
                 } else {
-                  profileData.pendingSubscriptionType = 'basic';
+                  profileData.pendingSubscriptionType = 'standard';
                 }
               }
               
-              setProfile(profileData);
+              if (profileData.role === 'admin') {
+                setAdminProfile(profileData);
+              }
+              
+              if (!impersonatedUser) {
+                setProfile(profileData);
+              }
             } else {
-              setProfile(null);
+              if (!impersonatedUser) {
+                setProfile(null);
+              }
             }
             setLoading(false);
           }, (error) => {
@@ -12423,29 +12667,41 @@ export default function App() {
           }
 
           // Normalize subscriptionType to exact standard/premium in UI
-          const subTypeStr = String(profileData.subscriptionType || 'basic').toLowerCase();
-          if (subTypeStr.includes('premium') || subTypeStr.includes('enterprise')) {
+          let subType = profileData.subscriptionType || 'standard';
+          if (profileData.pendingSubscriptionType) {
+            subType = profileData.pendingSubscriptionType;
+            profileData.subscriptionStatus = 'active';
+          }
+          const subTypeStr = String(subType).toLowerCase();
+          if (profileData.role === 'distributor' || profileData.role === 'importer') {
+            profileData.subscriptionType = 'distributor' as any;
+            if (userDoc.data()?.subscriptionType !== 'distributor') {
+              updateDoc(doc(db, 'users', user.uid), { subscriptionType: 'distributor' }).catch(err => console.error(err));
+            }
+          } else if (subTypeStr.includes('premium') || subTypeStr.includes('enterprise')) {
             profileData.subscriptionType = 'premium';
-          } else if (subTypeStr.includes('standard') || subTypeStr.includes('professional') || subTypeStr.includes('pro')) {
-            profileData.subscriptionType = 'standard';
           } else {
-            profileData.subscriptionType = 'basic';
+            profileData.subscriptionType = 'standard';
           }
 
           const pendingSubTypeStr = String(profileData.pendingSubscriptionType || '').toLowerCase();
           if (pendingSubTypeStr) {
             if (pendingSubTypeStr.includes('premium') || pendingSubTypeStr.includes('enterprise')) {
               profileData.pendingSubscriptionType = 'premium';
-            } else if (pendingSubTypeStr.includes('standard') || pendingSubTypeStr.includes('professional') || pendingSubTypeStr.includes('pro')) {
-              profileData.pendingSubscriptionType = 'standard';
             } else {
-              profileData.pendingSubscriptionType = 'basic';
+              profileData.pendingSubscriptionType = 'standard';
             }
           }
-          setProfile(profileData);
+          if (profileData.role === 'admin') {
+            setAdminProfile(profileData);
+          }
+          if (!impersonatedUser) {
+            setProfile(profileData);
+          }
         } else {
-          console.warn('Profile not found after refresh for UID:', user.uid);
-          setProfile(null);
+          if (!impersonatedUser) {
+            setProfile(null);
+          }
         }
       } catch (error) {
         console.error('Error refreshing profile:', error);
@@ -12459,6 +12715,7 @@ export default function App() {
     signOut(auth);
     setUser(null);
     setProfile(null);
+    setActiveTab('dashboard');
   };
 
   useEffect(() => {
@@ -12492,12 +12749,19 @@ export default function App() {
   if (!user) return <><Toaster position="top-right" /><Login onLoginSuccess={setUser} /></>;
   if (!profile || profile.verificationStatus === 'rejected_resubmitting') return <><Toaster position="top-right" /><SignupFlow user={user} onComplete={refreshProfile} settings={systemSettings} initialProfile={profile} /></>;
   
-  // Subscription Lock - Bypass and hide for pharmacy
-  if (profile.subscriptionStatus === 'expired' && profile.role === 'importer') {
+  const subStatus = getSubscriptionStatusInfo(profile, previewRestrictedMode);
+
+  // Hard subscription or suspension lockout
+  if (subStatus.isHardLocked) {
     return (
       <ErrorBoundary>
         <Toaster position="top-right" />
-        <SubscriptionLock user={profile} onRenew={refreshProfile} settings={systemSettings} />
+        <SubscriptionLock 
+          user={profile} 
+          onRenew={refreshProfile} 
+          settings={systemSettings} 
+          isSuspended={profile.verificationStatus === 'suspended' || profile.immediateLock} 
+        />
       </ErrorBoundary>
     );
   }
@@ -12505,8 +12769,19 @@ export default function App() {
   if (profile.verificationStatus !== 'approved' && profile.role !== 'admin') return <><Toaster position="top-right" /><VerificationPending profile={profile} /></>;
 
   const hasAccess = (tabId: string) => {
-    // Admin has access to everything
-    if (profile.role === 'admin') return true;
+    // Admin has access to everything unless in preview restricted mode mimicking constraints
+    if (profile.role === 'admin' && !previewRestrictedMode) return true;
+
+    const currentSubStatus = getSubscriptionStatusInfo(profile, previewRestrictedMode);
+    if (currentSubStatus.isReadOnlyMode) {
+      // In Read-Only Mode, restrict access to specific permitted tabs
+      if (tabId === 'subscription') return true;
+      if (tabId === 'dashboard') return profile.allowDashboard !== false;
+      if (tabId === 'reports' || tabId === 'analytics' || tabId === 'bincard') return profile.allowReports !== false;
+      if (tabId === 'inventory') return true; // View inventory
+      
+      return false; // All other tabs blocked in Read-Only Mode
+    }
 
     // Check feature access using centralized gate for pharmacy, staff, importer, or distributor roles
     if (['pharmacy', 'staff', 'importer', 'distributor'].includes(profile.role)) {
@@ -12530,6 +12805,7 @@ export default function App() {
       { id: 'suppliers', label: 'Wholesales', roles: ['pharmacy', 'staff'] },
       { id: 'marketplace', label: 'Marketplace', roles: ['pharmacy', 'admin', 'staff'] },
       { id: 'orders', label: 'B2B Orders', roles: ['pharmacy', 'importer', 'distributor', 'staff'] },
+      { id: 'customer-management', label: 'Customer Management', roles: ['importer', 'distributor'] },
       { id: 'procurement', label: 'Procurement (PR & PO)', roles: ['pharmacy', 'staff'] },
       { id: 'staff', label: 'Staff Accounts', roles: ['pharmacy', 'importer', 'distributor', 'staff'] },
       { id: 'branches', label: 'Branches', roles: ['pharmacy', 'staff'] },
@@ -12558,10 +12834,10 @@ export default function App() {
     // Role-specific allowed list for extra safety
     const accessMap: Record<string, string[]> = {
       pharmacy: ['dashboard', 'inventory', 'bincard', 'expiry', 'forecasting', 'sales', 'customers', 'marketplace', 'orders', 'procurement', 'suppliers', 'staff', 'branches', 'warehouses', 'subscription', 'settings'],
-      importer: ['dashboard', 'my-products', 'orders', 'warehouses', 'deliveries', 'advertising', 'reports', 'analytics', 'staff', 'subscription', 'notifications', 'settings'],
+      importer: ['dashboard', 'my-products', 'orders', 'customer-management', 'warehouses', 'deliveries', 'advertising', 'reports', 'analytics', 'staff', 'subscription', 'notifications', 'settings'],
       regional_manager: ['dashboard', 'settings'],
       marketing: ['dashboard', 'marketing-stats', 'settings'],
-      distributor: ['dashboard', 'my-products', 'orders', 'warehouses', 'deliveries', 'advertising', 'reports', 'analytics', 'staff', 'subscription', 'notifications', 'settings'],
+      distributor: ['dashboard', 'my-products', 'orders', 'customer-management', 'warehouses', 'deliveries', 'advertising', 'reports', 'analytics', 'staff', 'subscription', 'notifications', 'settings'],
     };
 
     // Staff access
@@ -12585,6 +12861,50 @@ export default function App() {
   return (
     <ErrorBoundary>
       <Toaster position="top-right" />
+
+      {/* Super Admin Impersonation Session Bar */}
+      {impersonatedUser && (
+        <div id="admin-impersonation-bar" className="bg-gradient-to-r from-purple-800 via-indigo-900 to-purple-850 text-white px-6 py-3 flex flex-col md:flex-row items-center justify-between gap-4 z-[9999] relative shadow-2xl border-b border-indigo-700/50">
+          <div className="flex items-center gap-3">
+            <span className="p-1.5 bg-purple-600/30 text-purple-200 rounded-lg animate-pulse">
+              <Sparkles size={16} />
+            </span>
+            <div>
+              <p className="text-xs font-black tracking-wider uppercase text-purple-300">Super Admin Impersonation Session</p>
+              <p className="text-sm font-extrabold text-white">
+                Acting as: <span className="underline decoration-purple-400 decoration-2">{impersonatedUser.pharmacyName || impersonatedUser.importerName || impersonatedUser.distributorName || impersonatedUser.displayName || 'Unnamed Organization'}</span> 
+                <span className="text-xs text-purple-200 font-mono ml-2">({impersonatedUser.email})</span>
+              </p>
+            </div>
+          </div>
+          
+          <div className="flex items-center gap-4 font-sans">
+            <label className="flex items-center gap-2 text-xs font-bold cursor-pointer bg-black/20 hover:bg-black/30 transition-colors px-3 py-1.5 rounded-lg select-none">
+              <input 
+                type="checkbox" 
+                checked={previewRestrictedMode} 
+                onChange={(e) => setPreviewRestrictedMode(e.target.checked)} 
+                className="rounded border-purple-500 text-purple-600 focus:ring-purple-500 h-3.5 w-3.5 cursor-pointer"
+              />
+              <span>Preview Restricted Mode</span>
+            </label>
+            
+            <button
+              onClick={() => {
+                setImpersonatedUser(null);
+                setProfile(adminProfile);
+                setPreviewRestrictedMode(false);
+                setActiveTab('dashboard');
+                toast.success('Exited impersonation successfully.');
+              }}
+              className="px-4 py-1.5 bg-white text-purple-900 hover:bg-purple-100 font-black rounded-lg text-xs transition cursor-pointer active:scale-95 shadow-md flex items-center gap-1 border-none"
+            >
+              <LogOut size={12} />
+              <span>Exit Impersonation</span>
+            </button>
+          </div>
+        </div>
+      )}
       
       {/* Offline Sync Center Side Sheet */}
       <AnimatePresence>
@@ -12848,46 +13168,85 @@ export default function App() {
 
           <AnimatePresence mode="wait">
             <motion.div key={activeTab} initial={{ opacity: 0, x: 10 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -10 }} transition={{ duration: 0.2 }}>
-              {!hasAccess(activeTab) ? (
-                <div id="access-restricted-container" className="p-12 flex flex-col items-center justify-center min-h-[70vh] text-center max-w-2xl mx-auto">
-                  <div className="w-24 h-24 bg-blue-50 dark:bg-blue-950/40 text-blue-600 dark:text-blue-400 rounded-3xl flex items-center justify-center mb-8 rotate-6 animate-pulse">
-                    <ShieldCheck size={48} />
-                  </div>
-                  
-                  <span className="text-[10px] font-black tracking-widest uppercase text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-900/40 px-3 py-1.5 rounded-full mb-3">Premium SaaS Feature Lock</span>
-                  <h2 className="text-3xl font-extrabold text-slate-900 dark:text-white mb-3">{getUpgradeRequirementLabel(activeTab)} Required</h2>
-                  
-                  <p className="text-sm text-slate-500 dark:text-slate-400 leading-relaxed mb-6">
-                    The requested section <span className="font-mono font-bold text-slate-700 dark:text-slate-200">"{activeTab.toUpperCase()}"</span> is part of the <span className="font-bold text-blue-600 dark:text-blue-400">{getUpgradeRequirementLabel(activeTab)} Plan</span>. 
-                    {profile.role === 'staff' 
-                      ? ' Your administrator has configured plan features for this pharmacy. Please contact your supervisor to process a subscription adjustment.' 
-                      : ' Unlock multiple-branch transfers, advanced analytical reports, custom patient discounts, unified warehouse layers, and more by updating your ecosystem service tier.'}
-                  </p>
+              {!hasAccess(activeTab) ? (() => {
+                const isReadOnlyActive = getSubscriptionStatusInfo(profile, previewRestrictedMode).isReadOnlyMode;
+                if (isReadOnlyActive) {
+                  return (
+                    <div id="access-restricted-container" className="p-12 flex flex-col items-center justify-center min-h-[70vh] text-center max-w-2xl mx-auto">
+                      <div className="w-24 h-24 bg-amber-50 dark:bg-amber-950/40 text-amber-600 dark:text-amber-400 rounded-3xl flex items-center justify-center mb-8 rotate-6 animate-pulse">
+                        <AlertTriangle size={48} />
+                      </div>
+                      
+                      <span className="text-[10px] font-black tracking-widest uppercase text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-900/40 px-3 py-1.5 rounded-full mb-3">Subscription Expired</span>
+                      <h2 className="text-3xl font-extrabold text-slate-900 dark:text-white mb-3">Read-Only Mode Active</h2>
+                      
+                      <p className="text-sm text-slate-500 dark:text-slate-400 leading-relaxed mb-6">
+                        Your subscription has expired, and your account has been placed in **Read-Only Mode**. You can still view your Dashboard and Inventory, but all transactional operations and other sections (such as <span className="font-mono font-bold text-slate-750 dark:text-slate-200">"{activeTab.toUpperCase()}"</span>) are currently locked.
+                      </p>
 
-                  <div className="flex flex-col sm:flex-row gap-4 w-full justify-center">
-                    <button 
-                      id="restricted-dashboard-btn"
-                      onClick={() => setActiveTab('dashboard')} 
-                      className="px-6 py-3 bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200 rounded-xl font-bold hover:bg-slate-200 dark:hover:bg-slate-705 transition-all text-xs"
-                    >
-                      Return to Dashboard
-                    </button>
-                    {profile.role !== 'staff' && (
+                      <div className="flex flex-col sm:flex-row gap-4 w-full justify-center">
+                        <button 
+                          id="restricted-dashboard-btn"
+                          onClick={() => setActiveTab('dashboard')} 
+                          className="px-6 py-3 bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200 rounded-xl font-bold hover:bg-slate-200 dark:hover:bg-slate-705 transition-all text-xs cursor-pointer"
+                        >
+                          Return to Dashboard
+                        </button>
+                        {profile.role !== 'staff' && (
+                          <button 
+                            id="restricted-upgrade-btn"
+                            onClick={() => setActiveTab('subscription')} 
+                            className="px-8 py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-bold shadow-lg shadow-blue-100 dark:shadow-none transition-all text-xs cursor-pointer"
+                          >
+                            Renew Subscription
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  );
+                }
+
+                return (
+                  <div id="access-restricted-container" className="p-12 flex flex-col items-center justify-center min-h-[70vh] text-center max-w-2xl mx-auto">
+                    <div className="w-24 h-24 bg-blue-50 dark:bg-blue-950/40 text-blue-600 dark:text-blue-400 rounded-3xl flex items-center justify-center mb-8 rotate-6 animate-pulse">
+                      <ShieldCheck size={48} />
+                    </div>
+                    
+                    <span className="text-[10px] font-black tracking-widest uppercase text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-900/40 px-3 py-1.5 rounded-full mb-3">Premium SaaS Feature Lock</span>
+                    <h2 className="text-3xl font-extrabold text-slate-900 dark:text-white mb-3">{getUpgradeRequirementLabel(activeTab)} Required</h2>
+                    
+                    <p className="text-sm text-slate-500 dark:text-slate-400 leading-relaxed mb-6">
+                      The requested section <span className="font-mono font-bold text-slate-700 dark:text-slate-200">"{activeTab.toUpperCase()}"</span> is part of the <span className="font-bold text-blue-600 dark:text-blue-400">{getUpgradeRequirementLabel(activeTab)} Plan</span>. 
+                      {profile.role === 'staff' 
+                        ? ' Your administrator has configured plan features for this pharmacy. Please contact your supervisor to process a subscription adjustment.' 
+                        : ' Unlock multiple-branch transfers, advanced analytical reports, custom patient discounts, unified warehouse layers, and more by updating your ecosystem service tier.'}
+                    </p>
+
+                    <div className="flex flex-col sm:flex-row gap-4 w-full justify-center">
                       <button 
-                        id="restricted-upgrade-btn"
-                        onClick={() => setActiveTab('subscription')} 
-                        className="px-8 py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-bold shadow-lg shadow-blue-100 dark:shadow-none transition-all text-xs"
+                        id="restricted-dashboard-btn"
+                        onClick={() => setActiveTab('dashboard')} 
+                        className="px-6 py-3 bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200 rounded-xl font-bold hover:bg-slate-200 dark:hover:bg-slate-705 transition-all text-xs cursor-pointer"
                       >
-                        Upgrade Subscription Plan
+                        Return to Dashboard
                       </button>
-                    )}
+                      {profile.role !== 'staff' && (
+                        <button 
+                          id="restricted-upgrade-btn"
+                          onClick={() => setActiveTab('subscription')} 
+                          className="px-8 py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-bold shadow-lg shadow-blue-100 dark:shadow-none transition-all text-xs cursor-pointer"
+                        >
+                          Upgrade Subscription Plan
+                        </button>
+                      )}
+                    </div>
                   </div>
-                </div>
-              ) : (
+                );
+              })() : (
                 <>
                   {(profile.role === 'importer' || profile.role === 'distributor') ? (
                     <>
-                      {['dashboard', 'my-products', 'orders', 'warehouses', 'deliveries', 'advertising', 'reports', 'analytics'].includes(activeTab) && (
+                      {['dashboard', 'my-products', 'orders', 'customer-management', 'warehouses', 'deliveries', 'advertising', 'reports', 'analytics'].includes(activeTab) && (
                         <DistributorView user={profile} activeTab={activeTab} setActiveTab={setActiveTab} />
                       )}
                       {activeTab === 'subscription' && <SubscriptionView user={profile} settings={systemSettings} language={language} />}
@@ -12902,7 +13261,7 @@ export default function App() {
                           : profile.role === 'marketing'
                           ? <MarketingDashboard user={profile} />
                           : profile.role === 'admin'
-                          ? <SuperAdminConsole initialTab="overview" />
+                          ? <SuperAdminConsole initialTab="overview" onImpersonateOrg={(org) => { setImpersonatedUser(org); setProfile(org); }} />
                           : <DashboardView role={profile.role} user={profile} setActiveTab={setActiveTab} selectedBranchId={selectedBranchId} branches={branches} settings={systemSettings} />
                       )}
                       {activeTab === 'inventory' && <InventoryView user={profile} addToOfflineQueue={addToOfflineQueue} syncStatus={syncStatus} selectedBranchId={selectedBranchId} branches={branches} />}
@@ -12927,6 +13286,7 @@ export default function App() {
                   {(activeTab === 'super-admin' || activeTab.startsWith('super-admin-')) && (
                     <SuperAdminConsole 
                       initialTab={(activeTab === 'super-admin' ? 'overview' : activeTab.replace('super-admin-', '')) as any} 
+                      onImpersonateOrg={(org) => { setImpersonatedUser(org); setProfile(org); }}
                     />
                   )}
                   {activeTab === 'admin-users' && <AdminUserManagement />}
@@ -13040,6 +13400,61 @@ export default function App() {
           <LegalFooter settings={systemSettings} />
         </main>
       </div>
+
+      {profile?.pendingReferralPopups && profile.pendingReferralPopups.length > 0 && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-fade-in">
+          <div className="bg-white dark:bg-slate-900 rounded-3xl p-8 max-w-md w-full border border-slate-150 dark:border-slate-800 shadow-2xl text-center space-y-6 transform scale-100 transition-all">
+            <div className="w-16 h-16 bg-blue-50 dark:bg-blue-950/30 text-blue-600 dark:text-blue-400 rounded-full flex items-center justify-center mx-auto text-3xl animate-bounce">
+              🎉
+            </div>
+            <div className="space-y-2">
+              <h3 className="text-2xl font-black text-slate-900 dark:text-white font-sans">
+                Congratulations!
+              </h3>
+              <div className="text-slate-600 dark:text-slate-300 space-y-4 text-sm font-medium leading-relaxed">
+                <p>Your referral has been approved.</p>
+                <div className="py-2.5 px-4 bg-emerald-50 dark:bg-emerald-950/20 border border-emerald-100 dark:border-emerald-900/30 rounded-xl inline-block">
+                  <span className="text-xs uppercase tracking-widest font-black text-emerald-600 dark:text-emerald-450 block">You Earned</span>
+                  <span className="text-xl font-black text-emerald-700 dark:text-emerald-400 font-sans">+1 FREE Month!</span>
+                </div>
+                <p>Your subscription has been extended automatically.</p>
+                <p className="text-xs text-slate-400 dark:text-slate-550 italic font-normal">Thank you for helping grow our ecosystem.</p>
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-3 pt-2">
+              <button
+                onClick={async () => {
+                  try {
+                    await updateDoc(doc(db, 'users', profile.uid), {
+                      pendingReferralPopups: []
+                    });
+                  } catch (err) {
+                    console.error('Failed to clear pending popups:', err);
+                  }
+                }}
+                className="px-4 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 font-bold text-xs font-sans transition-colors cursor-pointer"
+              >
+                Awesome!
+              </button>
+              <button
+                onClick={async () => {
+                  try {
+                    await updateDoc(doc(db, 'users', profile.uid), {
+                      pendingReferralPopups: []
+                    });
+                    setActiveTab('subscription');
+                  } catch (err) {
+                    console.error('Failed to clear pending popups:', err);
+                  }
+                }}
+                className="px-4 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 dark:bg-blue-500 dark:hover:bg-blue-600 text-white font-bold text-xs font-sans shadow-lg shadow-blue-500/20 transition-all cursor-pointer"
+              >
+                View Subscription
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </ErrorBoundary>
   );
 }

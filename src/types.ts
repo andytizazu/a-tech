@@ -1,5 +1,5 @@
 export type UserRole = 'admin' | 'pharmacy' | 'importer' | 'regional_manager' | 'support' | 'staff' | 'marketing' | 'distributor';
-export type VerificationStatus = 'pending' | 'approved' | 'rejected' | 'deactivated';
+export type VerificationStatus = 'pending' | 'approved' | 'rejected' | 'deactivated' | 'suspended';
 
 export interface UserProfile {
   uid: string;
@@ -19,7 +19,14 @@ export interface UserProfile {
   subscriptionStatus?: 'active' | 'expired' | 'past_due';
   subscriptionExpiryDate?: number;
   lastSubscriptionPaymentDate?: number;
+  isFreeTrial?: boolean;
   pendingSubscriptionType?: 'basic' | 'standard' | 'premium';
+  readOnlyEnabled?: boolean;
+  gracePeriodDays?: number | 'unlimited';
+  allowExport?: boolean;
+  allowReports?: boolean;
+  allowDashboard?: boolean;
+  immediateLock?: boolean;
   verificationStatus: VerificationStatus;
   verificationDocs?: string[]; // URLs to uploaded files
   rejectionReason?: string;
@@ -36,9 +43,13 @@ export interface UserProfile {
   referredBy?: string; // Code used during signup
   referrerUid?: string; // UID of the pharmacy/importer who referred this user
   referralRewardMonthsEarned?: number; // Total months earned through referrals
+  referralRewardApplied?: boolean; // Whether this user's referral reward was applied
+  pendingReferralPopups?: { id: string; referredName: string; }[]; // Unread referral reward notifications for popups
   marketingId?: string; // UID of the marketing member who referred this user
   commissionBalance?: number; // For marketing team
   theme?: 'light' | 'dark';
+  invitedWholesalerId?: string;
+  invitedCustomerId?: string;
   createdAt: number;
   deliverySettings?: {
     isFreeDelivery: boolean;
@@ -182,14 +193,14 @@ export interface SystemSettings {
   importerCommissions: { [importerId: string]: number };
   marketingCommission: {
     durationMonths: number;
-    basicPlanRate: number;
+    basicPlanRate?: number;
     standardPlanRate: number;
     premiumPlanRate: number;
     orderCommissionPercent: number;
   };
   pharmacyReferralRewardMonths: number;
   maxProductsPerPlan: {
-    basic: number;
+    basic?: number;
     standard: number;
     premium: number;
   };
@@ -199,15 +210,16 @@ export interface SystemSettings {
     analytics: boolean;
   };
   planPrices: {
-    basic: number;
+    basic?: number;
     standard: number;
     premium: number;
   };
+  distributorMonthlyFee?: number;
   additionalBranchFee?: number;
   branchPricingCurrency?: string;
   countryPricing?: {
     [country: string]: {
-      basic: number;
+      basic?: number;
       standard: number;
       premium: number;
       additionalBranchFee: number;
@@ -245,7 +257,7 @@ export interface SaaSInvoice {
   id: string;
   pharmacyId: string;
   pharmacyName: string;
-  plan: 'basic' | 'standard' | 'premium';
+  plan: 'basic' | 'standard' | 'premium' | string;
   basePrice: number;
   additionalBranchesCount: number;
   additionalBranchFee: number;
@@ -255,10 +267,14 @@ export interface SaaSInvoice {
   vatAmount?: number;
   subtotal?: number;
   currency: string;
-  status: 'paid' | 'pending';
+  status: 'paid' | 'pending' | 'active' | 'Expired' | string;
   billingPeriod: string; // e.g., "June 2026"
   createdAt: number;
   updatedAt: number;
+  paymentStatus?: 'Free Trial' | string;
+  paymentAmount?: number;
+  subscriptionType?: string;
+  paymentMethod?: string;
 }
 
 export interface Notification {
@@ -279,6 +295,16 @@ export interface AuditLog {
   details: string;
   ip?: string;
   timestamp: number;
+}
+
+export interface SubscriptionHistoryEntry {
+  id: string;
+  orgId: string;
+  date: number;
+  action: string; // 'Initial Free Trial' | 'Paid Subscription' | 'Referral Reward' | 'Admin Extension' | 'Renewal' | 'Upgrade' | 'Downgrade' | 'Expiration'
+  months: string;  // e.g. "+1", "+2", etc.
+  performedBy: string; // 'System', 'Super Admin', or email
+  reason?: string;
 }
 
 export interface SubscriptionPlan {
@@ -444,3 +470,55 @@ export const getCurrencyName = (country?: string): string => {
   if (c.includes('seychelles')) return 'Seychellois Rupee';
   return 'Ethiopian Birr';
 };
+
+export interface WholesaleCustomer {
+  id: string;
+  wholesalerId: string;
+  isPrivate: boolean;
+  linkedOrgId?: string;
+  businessName: string;
+  customerType: 'pharmacy' | 'clinic' | 'hospital' | 'medical_store' | 'ngo' | 'government' | 'other';
+  ownerName: string;
+  phone: string;
+  alternativePhone?: string;
+  email: string;
+  tinNumber?: string;
+  licenseNumber?: string;
+  address?: string;
+  region?: string;
+  city?: string;
+  gpsLocation?: string;
+  paymentTerms?: string;
+  creditLimit: number;
+  openingBalance: number;
+  preferredSalesRep?: string;
+  internalNotes?: string;
+  status: 'active' | 'inactive' | 'blocked';
+  createdAt: number;
+  updatedAt?: number;
+  
+  // Computed / aggregated fields for POS and sync
+  totalOrders: number;
+  totalSpending: number;
+  outstandingBalance: number;
+  lastPurchaseDate?: number;
+  score: number; // 0-100
+  rating: 'VIP' | 'Gold' | 'Silver' | 'Bronze';
+  
+  timeline: Array<{
+    id: string;
+    type: string;
+    title: string;
+    description: string;
+    timestamp: number;
+  }>;
+  
+  uploadedDocuments: Array<{
+    id: string;
+    name: string;
+    url: string;
+    type: string;
+    timestamp: number;
+  }>;
+}
+

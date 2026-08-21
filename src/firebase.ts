@@ -1,7 +1,10 @@
 import { initializeApp } from 'firebase/app';
 import { getAuth } from 'firebase/auth';
-import { initializeFirestore, doc, getDocFromServer, enableIndexedDbPersistence } from 'firebase/firestore';
+import { initializeFirestore, doc, getDocFromServer, enableIndexedDbPersistence, setLogLevel } from 'firebase/firestore';
 import firebaseConfig from '../firebase-applet-config.json';
+
+// Suppress verbose Firestore warning/debug logs (e.g. minor clock drifts between server/client)
+setLogLevel('error');
 
 const app = initializeApp(firebaseConfig);
 export const db = initializeFirestore(app, {

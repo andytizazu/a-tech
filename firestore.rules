@@ -1,61 +1,28 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    // ===============================================================
-    // Assumed Data Models
-    // ===============================================================
-    // Collection: users
-    // Fields:
-    //   - uid: string (required)
-    //   - role: string (one of: admin, pharmacy, importer, marketing, regional_manager, staff)
-    //   - email: string (email format)
-    //   - displayName: string (required, < 100 chars)
-    //   - country: string (required)
-    //   - verificationStatus: string (pending, approved, rejected)
-    //   - promoCode: string (optional, for marketing role)
-    //   - commissionBalance: number (optional, for marketing role)
     
-    // ===============================================================
-    // Helper Functions
-    // ===============================================================
+    // Default deny catch-all
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Helper functions
     function isAuthenticated() {
       return request.auth != null;
     }
 
-    function isVerified() {
-      return isAuthenticated();
-    }
-    
     function getUserData() {
       return exists(/databases/$(database)/documents/users/$(request.auth.uid)) 
         ? get(/databases/$(database)/documents/users/$(request.auth.uid)).data 
         : {};
     }
-    
-    function getRole() { 
+
+    function getRole() {
       return exists(/databases/$(database)/documents/users/$(request.auth.uid))
         ? get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('role', 'none')
-        : 'none'; 
+        : 'none';
     }
-    function getPharmacyId() { 
-      return exists(/databases/$(database)/documents/users/$(request.auth.uid))
-        ? get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('pharmacyId', 'none')
-        : 'none'; 
-    }
-    function getImporterId() { 
-      return exists(/databases/$(database)/documents/users/$(request.auth.uid))
-        ? get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('importerId', 'none') 
-        : 'none'; 
-    }
-    function getCountry() { 
-      return exists(/databases/$(database)/documents/users/$(request.auth.uid))
-        ? get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('country', 'none') 
-        : 'none'; 
-    }
-    
-    function isStaff() { return getRole() == 'staff'; }
-    function getParentPharmacyId() { return getPharmacyId(); }
-    function getParentImporterId() { return getImporterId(); }
 
     function isAdmin() {
       return isAuthenticated() && (
@@ -71,258 +38,131 @@ service cloud.firestore {
       return isAuthenticated() && request.auth.uid == userId;
     }
 
-    function isValidEmail(email) {
-      return email is string && email.matches("^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$");
-    }
-
-    // ===============================================================
-    // Domain Validators
-    // ===============================================================
-    function isValidUser(data) {
-      return data.role in ['admin', 'pharmacy', 'importer', 'marketing', 'regional_manager', 'staff', 'distributor'] &&
-             isValidEmail(data.email) &&
-             data.displayName is string && data.displayName.size() < 100 &&
-             (!('country' in data) || (data.country is string && data.country.size() < 50));
-    }
-
-    // ===============================================================
-    // Rules
-    // ===============================================================
-
+    // Collection rules
     match /users/{uid} {
       allow read: if isAuthenticated();
-      
       allow create: if isAuthenticated() && (isOwner(uid) || isAdmin());
-      
-      allow update: if isAuthenticated() && (isOwner(uid) || isAdmin() || (getRole() in ['pharmacy', 'importer', 'staff'] && resource.data.role == 'staff' && (resource.data.pharmacyId == request.auth.uid || resource.data.importerId == request.auth.uid || resource.data.pharmacyId == getPharmacyId() || resource.data.importerId == getImporterId())));
-      
-      allow delete: if isAdmin() || isOwner(uid) || (isAuthenticated() && (resource.data.pharmacyId == request.auth.uid || resource.data.pharmacyId == getPharmacyId()));
-    }
-
-    match /test/{id} {
-      allow read: if true;
-    }
-
-    match /test_allow/{id} {
-      allow read, write: if true;
-    }
-
-    match /system_settings/{id} {
-      allow read: if true;
-      allow write: if isAdmin();
-    }
-
-    match /branches/{id} {
-      allow read: if isAuthenticated();
-      allow create, update: if isAuthenticated() && (
-        request.resource.data.pharmacyId == request.auth.uid || 
-        request.resource.data.pharmacyId == getPharmacyId() ||
-        request.resource.data.pharmacyId != 'none'
-      );
-      allow delete: if isAdmin() || (isAuthenticated() && (resource.data.pharmacyId == request.auth.uid || resource.data.pharmacyId == getPharmacyId()));
-    }
-
-    match /warehouses/{id} {
-      allow read: if isAuthenticated();
-      allow create, update: if isAuthenticated() && (
-        request.resource.data.pharmacyId == request.auth.uid || 
-        request.resource.data.pharmacyId == getPharmacyId() ||
-        request.resource.data.pharmacyId != 'none'
-      );
-      allow delete: if isAdmin() || (isAuthenticated() && (resource.data.pharmacyId == request.auth.uid || resource.data.pharmacyId == getPharmacyId()));
-    }
-
-    match /warehouse_transactions/{id} {
-      allow read: if isAuthenticated();
-      allow create: if isAuthenticated() && (
-        request.resource.data.pharmacyId == request.auth.uid || 
-        request.resource.data.pharmacyId == getPharmacyId() ||
-        request.resource.data.pharmacyId != 'none'
-      );
-      allow update, delete: if isAdmin();
-    }
-
-    match /transfers/{id} {
-      allow read: if isAuthenticated() && (
-        isAdmin() || 
-        resource.data.pharmacyId == request.auth.uid || 
-        resource.data.pharmacyId == getPharmacyId()
-      );
-      allow create, update: if isVerified() && (
-        request.resource.data.pharmacyId == request.auth.uid || 
-        request.resource.data.pharmacyId == getPharmacyId()
-      );
-      allow delete: if isAdmin() || (isAuthenticated() && (resource.data.pharmacyId == request.auth.uid || resource.data.pharmacyId == getPharmacyId()));
+      allow update: if isAuthenticated() && (isOwner(uid) || isAdmin());
+      allow delete: if isAdmin() || isOwner(uid);
     }
 
     match /medicines/{id} {
       allow read: if isAuthenticated();
-      allow create: if isVerified() && (
-        request.resource.data.pharmacyId == request.auth.uid || 
-        request.resource.data.pharmacyId == getPharmacyId()
-      );
-      allow update: if isVerified() && (
-        isAdmin() || 
-        resource.data.pharmacyId == request.auth.uid || 
-        resource.data.pharmacyId == getPharmacyId()
-      );
-      allow delete: if isAdmin() || (isAuthenticated() && (resource.data.pharmacyId == request.auth.uid || resource.data.pharmacyId == getPharmacyId()));
+      allow write: if isAuthenticated();
     }
 
-    match /expiry_settings/{id} {
-      allow read: if isAuthenticated() && (
-        isAdmin() || 
-        id == request.auth.uid || 
-        id == getPharmacyId()
-      );
-      allow write: if isVerified() && (
-        isAdmin() ||
-        id == request.auth.uid || 
-        id == getPharmacyId()
-      );
+    match /branches/{id} {
+      allow read: if isAuthenticated();
+      allow write: if isAuthenticated();
+    }
+
+    match /warehouses/{id} {
+      allow read: if isAuthenticated();
+      allow write: if isAuthenticated();
+    }
+
+    match /warehouse_transactions/{id} {
+      allow read: if isAuthenticated();
+      allow write: if isAuthenticated();
+    }
+
+    match /transfers/{id} {
+      allow read: if isAuthenticated();
+      allow write: if isAuthenticated();
     }
 
     match /sales/{id} {
       allow read: if isAuthenticated();
-      allow create: if isVerified() && (
-        request.resource.data.pharmacyId == request.auth.uid || 
-        request.resource.data.pharmacyId == getPharmacyId()
-      );
-      allow update, delete: if isAdmin();
-    }
-
-    match /customers/{id} {
-      allow read: if isAuthenticated();
-      allow create, update: if isVerified() && (
-        request.resource.data.pharmacyId == request.auth.uid || 
-        request.resource.data.pharmacyId == getPharmacyId()
-      );
-      allow delete: if isAdmin() || (isAuthenticated() && (resource.data.pharmacyId == request.auth.uid || resource.data.pharmacyId == getPharmacyId()));
+      allow write: if isAuthenticated();
     }
 
     match /products/{id} {
       allow read: if isAuthenticated();
-      allow create: if isVerified() && (isAdmin() || getRole() in ['importer', 'distributor'] || (getRole() == 'staff' && getParentImporterId() != 'none'));
-      allow update: if isVerified() && (
-        isAdmin() || 
-        getRole() in ['importer', 'distributor'] || 
-        (getRole() == 'staff' && getParentImporterId() != 'none') ||
-        (getRole() in ['pharmacy', 'staff'] && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['stockQuantity']))
-      );
-      allow delete: if isVerified() && (isAdmin() || getRole() in ['importer', 'distributor'] || (getRole() == 'staff' && getParentImporterId() != 'none'));
+      allow write: if isAuthenticated();
     }
 
     match /orders/{id} {
-      allow read: if isAuthenticated() && (
-        isAdmin() || 
-        resource.data.pharmacyId == request.auth.uid || 
-        resource.data.importerId == request.auth.uid ||
-        resource.data.marketingId == request.auth.uid ||
-        resource.data.pharmacyId == getPharmacyId() ||
-        resource.data.importerId == getImporterId() ||
-        // Regional managers can read orders in their country
-        (getRole() == 'regional_manager' && resource.data.get('country', '') == getCountry())
-      );
-      allow create: if isVerified();
-      allow update: if isVerified() && (
-        isAdmin() || 
-        resource.data.pharmacyId == request.auth.uid || 
-        resource.data.importerId == request.auth.uid ||
-        resource.data.pharmacyId == getPharmacyId() ||
-        resource.data.importerId == getImporterId() ||
-        // Regional managers can update orders in their country
-        (getRole() == 'regional_manager' && resource.data.get('country', '') == getCountry())
-      );
-      allow delete: if isAdmin();
+      allow read: if isAuthenticated();
+      allow write: if isAuthenticated();
     }
 
     match /purchase_orders/{id} {
       allow read: if isAuthenticated();
-      allow create: if isVerified() && (
-        request.resource.data.pharmacyId == request.auth.uid || 
-        request.resource.data.pharmacyId == getPharmacyId()
-      );
-      allow update: if isVerified() && (
-        isAdmin() || 
-        request.resource.data.pharmacyId == request.auth.uid || 
-        request.resource.data.pharmacyId == getPharmacyId() ||
-        resource.data.pharmacyId == request.auth.uid ||
-        resource.data.pharmacyId == getPharmacyId()
-      );
-      allow delete: if isAdmin() || (isAuthenticated() && (resource.data.pharmacyId == request.auth.uid || resource.data.pharmacyId == getPharmacyId()));
+      allow write: if isAuthenticated();
     }
 
     match /suppliers/{id} {
       allow read: if isAuthenticated();
-      allow create: if isVerified() && (
-        request.resource.data.pharmacyId == request.auth.uid || 
-        request.resource.data.pharmacyId == getPharmacyId()
-      );
-      allow update: if isVerified() && (
-        isAdmin() || 
-        request.resource.data.pharmacyId == request.auth.uid || 
-        request.resource.data.pharmacyId == getPharmacyId() ||
-        resource.data.pharmacyId == request.auth.uid ||
-        resource.data.pharmacyId == getPharmacyId()
-      );
-      allow delete: if isAdmin() || (isAuthenticated() && (resource.data.pharmacyId == request.auth.uid || resource.data.pharmacyId == getPharmacyId()));
+      allow write: if isAuthenticated();
+    }
+
+    match /expiry_settings/{id} {
+      allow read: if isAuthenticated();
+      allow write: if isAuthenticated();
+    }
+
+    match /system_settings/{id} {
+      allow read: if isAuthenticated();
+      allow write: if isAuthenticated() || isAdmin();
     }
 
     match /notifications/{id} {
       allow read: if isAuthenticated();
-      allow write: if isAdmin();
-    }
-
-    match /territories/{id} {
-      allow read: if isAuthenticated();
-      allow create, update: if isAuthenticated() && (isAdmin() || getRole() in ['importer', 'distributor']);
-      allow delete: if isAdmin();
-    }
-
-    match /p2p_requests/{id} {
-      allow read, write: if isAuthenticated();
+      allow write: if isAuthenticated();
     }
 
     match /audit_logs/{id} {
-      allow read, write: if isAuthenticated();
+      allow read: if isAuthenticated();
+      allow write: if isAuthenticated();
     }
 
     match /inventory_movements/{id} {
       allow read: if isAuthenticated();
-      allow create: if isAuthenticated() && (
-        request.resource.data.pharmacyId == request.auth.uid || 
-        request.resource.data.pharmacyId == getPharmacyId() ||
-        request.resource.data.pharmacyId != 'none'
-      );
-      allow update, delete: if isAdmin();
+      allow write: if isAuthenticated();
+    }
+
+    match /advertisements/{id} {
+      allow read: if isAuthenticated();
+      allow write: if isAuthenticated() || isAdmin();
     }
 
     match /saas_invoices/{id} {
       allow read: if isAuthenticated();
-      allow create, update: if isAuthenticated() && (
-        request.resource.data.pharmacyId == request.auth.uid || 
-        request.resource.data.pharmacyId == getPharmacyId()
-      );
-      allow delete: if isAdmin();
+      allow write: if isAuthenticated() || isAdmin();
     }
 
-    match /advertisements/{id} {
-      allow read, write: if isAuthenticated();
+    match /customers/{id} {
+      allow read: if isAuthenticated();
+      allow write: if isAuthenticated();
+    }
+
+    match /wholesale_customers/{id} {
+      allow read: if isAuthenticated() && (resource == null || resource.data.wholesalerId == request.auth.uid || isAdmin());
+      allow create: if isAuthenticated() && (request.resource.data.wholesalerId == request.auth.uid || isAdmin());
+      allow update: if isAuthenticated() && (resource.data.wholesalerId == request.auth.uid || isAdmin());
+      allow delete: if isAdmin() || (isAuthenticated() && resource.data.wholesalerId == request.auth.uid);
+    }
+
+    match /wholesale_private_sales/{id} {
+      allow read: if isAuthenticated() && (resource == null || resource.data.wholesalerId == request.auth.uid || isAdmin());
+      allow create: if isAuthenticated() && (request.resource.data.wholesalerId == request.auth.uid || isAdmin());
+      allow update: if isAuthenticated() && (resource.data.wholesalerId == request.auth.uid || isAdmin());
+      allow delete: if isAdmin() || (isAuthenticated() && resource.data.wholesalerId == request.auth.uid);
     }
 
     match /marketing_invites/{id} {
-      allow read: if true;
-      allow create: if isAdmin();
-      allow update: if isAdmin() || (
-        resource.data.used == false &&
-        request.resource.data.used == true &&
-        request.resource.data.usedByUid is string
-      );
-      allow delete: if isAdmin();
+      allow read: if isAuthenticated();
+      allow write: if isAuthenticated();
     }
 
-    match /{path=**} {
-      allow read, write: if isAdmin();
+    match /p2p_requests/{id} {
+      allow read: if isAuthenticated();
+      allow write: if isAuthenticated();
+    }
+
+    match /subscription_history/{id} {
+      allow read: if isAuthenticated();
+      allow write: if isAuthenticated() || isAdmin();
     }
   }
 }

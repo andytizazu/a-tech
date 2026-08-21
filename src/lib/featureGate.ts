@@ -47,11 +47,7 @@ export const FEATURES_LIST: FeatureDefinition[] = [
   { id: 'enterprise_audit_center', name: 'Global Enterprise Audit Control', category: 'enterprise', description: 'Central governance dashboard for high-volume corporate administrative oversight.' }
 ];
 
-export const DEFAULT_PLAN_FEATURES: Record<'basic' | 'standard' | 'premium', string[]> = {
-  basic: [
-    'dashboard', 'inventory', 'sales', 'customers', 'bincard', 'expiry', 'forecasting', 
-    'procurement', 'subscription', 'notifications', 'settings', 'suppliers'
-  ],
+export const DEFAULT_PLAN_FEATURES: Record<'standard' | 'premium', string[]> = {
   standard: [
     'dashboard', 'inventory', 'sales', 'customers', 'bincard', 'expiry', 'forecasting', 
     'procurement', 'subscription', 'notifications', 'settings',
@@ -89,7 +85,7 @@ export const hasFeature = (
     const importerBase = [
       'dashboard', 'my-products', 'customers', 'orders', 'suppliers', 'warehouses', 
       'deliveries', 'advertising', 'reports', 'analytics', 'staff', 'subscription', 
-      'settings', 'notifications'
+      'settings', 'notifications', 'customer-management'
     ];
     return importerBase.includes(featureId);
   }
@@ -99,20 +95,19 @@ export const hasFeature = (
     const distributorBase = [
       'dashboard', 'my-products', 'orders', 'warehouses', 'deliveries', 
       'advertising', 'reports', 'analytics', 'staff', 'subscription', 'settings', 
-      'notifications'
+      'notifications', 'customer-management'
     ];
     return distributorBase.includes(featureId);
   }
 
   // Get current pharmacy/staff plan
-  const rawPlan = (profile.subscriptionType || 'basic') as string;
+  const rawPlan = (profile.subscriptionType || 'standard') as string;
   const rawPlanLower = rawPlan.toLowerCase();
-  const plan: 'basic' | 'standard' | 'premium' = 
-    rawPlanLower.includes('premium') || rawPlanLower.includes('enterprise') ? 'premium' : 
-    rawPlanLower.includes('standard') || rawPlanLower.includes('professional') || rawPlanLower.includes('pro') ? 'standard' : 'basic';
+  const plan: 'standard' | 'premium' = 
+    rawPlanLower.includes('premium') || rawPlanLower.includes('enterprise') ? 'premium' : 'standard';
 
   // Baseline standard features for this plan tier
-  const baselineFeatures = DEFAULT_PLAN_FEATURES[plan];
+  const baselineFeatures = DEFAULT_PLAN_FEATURES[plan] || DEFAULT_PLAN_FEATURES.standard;
 
   // Try to load any customization from system settings
   let allowedFeatures = baselineFeatures;
@@ -121,7 +116,6 @@ export const hasFeature = (
   } else if (settings?.plansCustomize?.[plan]?.features) {
     // If customized features have explicit functional codes (e.g. 'branches'), use them
     const functionalKeys = settings.plansCustomize[plan].features.filter((f: string) => 
-      DEFAULT_PLAN_FEATURES.basic.includes(f) || 
       DEFAULT_PLAN_FEATURES.standard.includes(f) || 
       DEFAULT_PLAN_FEATURES.premium.includes(f)
     );

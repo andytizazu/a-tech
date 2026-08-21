@@ -317,9 +317,85 @@
         "updatedAt": { "type": "number" }
       },
       "required": ["pharmacyId"]
+    },
+    "SubscriptionHistoryEntry": {
+      "title": "Subscription History Entry",
+      "description": "Log of subscription action changes, trial rewards, and extensions for organizations.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "orgId": { "type": "string" },
+        "date": { "type": "number" },
+        "action": { "type": "string" },
+        "months": { "type": "string" },
+        "performedBy": { "type": "string" },
+        "reason": { "type": "string" }
+      },
+      "required": ["id", "orgId", "date", "action", "months", "performedBy"]
+    },
+    "WholesaleCustomer": {
+      "title": "Wholesale Customer",
+      "description": "Information about a custom-registered wholesale customer (private or linked).",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "wholesalerId": { "type": "string" },
+        "isPrivate": { "type": "boolean" },
+        "linkedOrgId": { "type": "string" },
+        "businessName": { "type": "string" },
+        "customerType": { "type": "string", "enum": ["pharmacy", "clinic", "hospital", "medical_store", "ngo", "government", "other"] },
+        "ownerName": { "type": "string" },
+        "phone": { "type": "string" },
+        "alternativePhone": { "type": "string" },
+        "email": { "type": "string" },
+        "tinNumber": { "type": "string" },
+        "licenseNumber": { "type": "string" },
+        "address": { "type": "string" },
+        "region": { "type": "string" },
+        "city": { "type": "string" },
+        "gpsLocation": { "type": "string" },
+        "paymentTerms": { "type": "string" },
+        "creditLimit": { "type": "number" },
+        "openingBalance": { "type": "number" },
+        "preferredSalesRep": { "type": "string" },
+        "internalNotes": { "type": "string" },
+        "status": { "type": "string", "enum": ["active", "inactive", "blocked"] },
+        "createdAt": { "type": "number" },
+        "updatedAt": { "type": "number" }
+      },
+      "required": ["id", "wholesalerId", "isPrivate", "businessName", "customerType", "createdAt"]
+    },
+    "WholesalePrivateSale": {
+      "title": "Wholesale Private Sale",
+      "description": "Recorded POS sales transactions of private wholesale customers.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "wholesalerId": { "type": "string" },
+        "customerId": { "type": "string" },
+        "customerName": { "type": "string" },
+        "items": { "type": "array" },
+        "subtotal": { "type": "number" },
+        "discount": { "type": "number" },
+        "vatAmount": { "type": "number" },
+        "totalAmount": { "type": "number" },
+        "paymentMethod": { "type": "string" },
+        "mixedCash": { "type": "number" },
+        "mixedBank": { "type": "number" },
+        "createdAt": { "type": "number" }
+      },
+      "required": ["id", "wholesalerId", "customerId", "customerName", "items", "totalAmount", "createdAt"]
     }
   },
   "firestore": {
+    "/wholesale_customers/{id}": {
+      "schema": "WholesaleCustomer",
+      "description": "Wholesale custom customers (private list and converted partners)."
+    },
+    "/wholesale_private_sales/{id}": {
+      "schema": "WholesalePrivateSale",
+      "description": "Wholesale private POS transaction receipts."
+    },
     "/users/{uid}": {
       "schema": "UserProfile",
       "description": "User profile documents."
@@ -383,6 +459,10 @@
     "/inventory_movements/{logId}": {
       "schema": "BinCardEntry",
       "description": "Medicine item transaction logs and ledger movements."
+    },
+    "/subscription_history/{id}": {
+      "schema": "SubscriptionHistoryEntry",
+      "description": "Subscription actions, history logs, and free/promo month grants."
     }
   }
 }

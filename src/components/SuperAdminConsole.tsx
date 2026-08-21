@@ -11,6 +11,8 @@ import {
   addDoc, 
   setDoc,
   getDocs,
+  getDoc,
+  arrayUnion,
   deleteDoc,
   Timestamp 
 } from 'firebase/firestore';
@@ -24,7 +26,8 @@ import {
   AuditLog,
   getCurrencySymbol,
   getCurrencyName,
-  SaaSInvoice
+  SaaSInvoice,
+  SubscriptionHistoryEntry
 } from '../types';
 import { FEATURES_LIST, DEFAULT_PLAN_FEATURES } from '../lib/featureGate';
 import { syncPharmacyBillingAndInvoices } from '../lib/billingEngine';
@@ -56,11 +59,14 @@ import {
   ChevronLeft, 
   Lock, 
   Unlock, 
+  Play,
+  Pause,
   Eye, 
   RefreshCw, 
   X, 
   Layers,
-  Trash2
+  Trash2,
+  Sparkles
 } from 'lucide-react';
 import { 
   ResponsiveContainer, 
@@ -114,7 +120,13 @@ type SuperAdminTab =
   | 'ai'
   | 'pharmacy-wholesales';
 
-export const SuperAdminConsole = ({ initialTab }: { initialTab?: SuperAdminTab }) => {
+export const SuperAdminConsole = ({ 
+  initialTab,
+  onImpersonateOrg
+}: { 
+  initialTab?: SuperAdminTab,
+  onImpersonateOrg?: (org: UserProfile) => void
+}) => {
   const [activeTab, setActiveTab] = useState<SuperAdminTab>(initialTab || 'overview');
 
   useEffect(() => {
@@ -135,6 +147,7 @@ export const SuperAdminConsole = ({ initialTab }: { initialTab?: SuperAdminTab }
   const [tickets, setTickets] = useState<SupportTicket[]>([]);
   const [warehouses, setWarehouses] = useState<any[]>([]);
   const [allSuppliers, setAllSuppliers] = useState<any[]>([]);
+  const [allSubscriptionHistory, setAllSubscriptionHistory] = useState<SubscriptionHistoryEntry[]>([]);
   const [pharmacyWholesalesSearch, setPharmacyWholesalesSearch] = useState<string>('');
   const [loading, setLoading] = useState(true);
 
@@ -154,6 +167,13 @@ export const SuperAdminConsole = ({ initialTab }: { initialTab?: SuperAdminTab }
   const [showPromoModal, setShowPromoModal] = useState(false);
   const [showFilesModal, setShowFilesModal] = useState(false);
   const [selectedUserForFiles, setSelectedUserForFiles] = useState<UserProfile | null>(null);
+
+  // Organization Detail & Subscription History States
+  const [selectedOrgForDetail, setSelectedOrgForDetail] = useState<UserProfile | null>(null);
+  const [showAddFreeMonthsModal, setShowAddFreeMonthsModal] = useState(false);
+  const [extensionMonths, setExtensionMonths] = useState<number>(1);
+  const [extensionReason, setExtensionReason] = useState<string>('');
+  const [subHistory, setSubHistory] = useState<SubscriptionHistoryEntry[]>([]);
 
   // Regional Manager Creation states
   const [showAddRMModal, setShowAddRMModal] = useState(false);
@@ -182,7 +202,7 @@ export const SuperAdminConsole = ({ initialTab }: { initialTab?: SuperAdminTab }
     country: 'Ethiopia',
     region: 'Addis Ababa',
     city: 'Addis Ababa',
-    subscriptionType: 'basic' as 'basic'|'standard'|'premium',
+    subscriptionType: 'standard' as 'standard'|'premium',
     phone: '',
     countryCode: '+251',
     currency: 'ETB'
@@ -207,7 +227,7 @@ export const SuperAdminConsole = ({ initialTab }: { initialTab?: SuperAdminTab }
   });
 
   // Dynamic subscription customized manager state variables
-  const [selectedEditPlan, setSelectedEditPlan] = useState<'basic' | 'standard' | 'premium'>('basic');
+  const [selectedEditPlan, setSelectedEditPlan] = useState<'standard' | 'premium'>('standard');
   const [customPlanName, setCustomPlanName] = useState('');
   const [customPlanDescription, setCustomPlanDescription] = useState('');
   const [customPlanFeatures, setCustomPlanFeatures] = useState<string[]>([]);
@@ -224,30 +244,16 @@ export const SuperAdminConsole = ({ initialTab }: { initialTab?: SuperAdminTab }
 
   // Baseline Fallback New Subscription Plan configurations representing high pharmacy ecosystem fidelity
   const DEFAULT_PLANS_FALLBACK = {
-    basic: {
-      name: 'Basic',
-      description: 'Ideal support for single location pharmacies, small stores and new setups starting active workflows.',
-      recommended: false,
-      features: [
-        'Inventory Management', 'Sales Management', 'Customer Management', 'Purchase Management', 
-        'Expiry Tracking', 'Generic Name Tracking', 'Country of Origin Tracking', 'Purchase Units', 
-        'Dispensing Units', 'Conversion Factors', 'Bin Card Reports', 'Barcode Support', 
-        'Basic Reporting', 'Receipt Printing', 'User Management', 'Dashboard Analytics'
-      ],
-      limitations: [
-        'Branch Management & Multi-Outlet accounts', 'Branch-to-Branch Transfers & approvals', 
-        'Advanced Inventory Analytics indicators', 'Logistics & Wholesale Pharmacies Ledger Node', 
-        'Detailed Administrative Audit Operations'
-      ],
-      futureFeatures: ['Standard Multi-user Audits Platform'],
-      enableFutureFeatures: false
-    },
     standard: {
       name: 'Professional',
       description: 'Engineered for expanding pharmacies and businesses running multiple operations seamlessly.',
       recommended: true,
       features: [
-        'Everything in Basic Plan', 'Branch Management', 'Multiple Branch Support', 'Branch Billing Options', 
+        'Inventory Management', 'Sales Management', 'Customer Management', 'Purchase Management', 
+        'Expiry Tracking', 'Generic Name Tracking', 'Country of Origin Tracking', 'Purchase Units', 
+        'Dispensing Units', 'Conversion Factors', 'Bin Card Reports', 'Barcode Support', 
+        'Basic Reporting', 'Receipt Printing', 'User Management', 'Dashboard Analytics',
+        'Branch Management', 'Multiple Branch Support', 'Branch Billing Options', 
         'Branch Creation and Deletion', 'Branch-Level Reporting', 'Branch Performance Analytics', 
         'Branch Inventory Visibility', 'Customer Discount Management', 'Batch-Aware POS', 
         'FEFO Recommendations', 'Batch Tracking', 'Advanced Inventory Reports', 'Audit Logs', 
@@ -299,7 +305,6 @@ export const SuperAdminConsole = ({ initialTab }: { initialTab?: SuperAdminTab }
   const handleSavePlanCustomizations = async () => {
     try {
       const currentCustomize = (systemSettings as any)?.plansCustomize || {
-        basic: DEFAULT_PLANS_FALLBACK.basic,
         standard: DEFAULT_PLANS_FALLBACK.standard,
         premium: DEFAULT_PLANS_FALLBACK.premium
       };
@@ -318,9 +323,9 @@ export const SuperAdminConsole = ({ initialTab }: { initialTab?: SuperAdminTab }
         }
       };
 
-      await updateDoc(doc(db, 'system_settings', 'main'), {
+      await setDoc(doc(db, 'system_settings', 'main'), {
         plansCustomize: updatedCustomize
-      });
+      }, { merge: true });
       toast.success(`Successfully saved customized details to ${selectedEditPlan.toUpperCase()}!`);
       createAuditLog('PLAN_CUSTOMIZATION', `Customized plan features for ${selectedEditPlan}`);
     } catch (err) {
@@ -385,6 +390,12 @@ export const SuperAdminConsole = ({ initialTab }: { initialTab?: SuperAdminTab }
       console.error("Failed to load suppliers in super admin", err);
     });
 
+    const unsubSubHistory = onSnapshot(collection(db, 'subscription_history'), (snapshot) => {
+      setAllSubscriptionHistory(snapshot.docs.map(d => ({ id: d.id, ...d.data() } as SubscriptionHistoryEntry)));
+    }, (err) => {
+      console.error("Failed to load global subscription history in super admin", err);
+    });
+
     // Mock initial tickets
     setTickets([
       { id: 't_1', organizationId: 'p_1', organizationName: 'Abyssinia Pharmacy', title: 'Payment Gate Verification', description: 'Premium subscription renewal payment is stuck.', category: 'billing', severity: 'high', status: 'open', createdAt: Date.now() - 86400000 },
@@ -402,6 +413,7 @@ export const SuperAdminConsole = ({ initialTab }: { initialTab?: SuperAdminTab }
       unsubAudit();
       unsubInvoices();
       unsubSuppliers();
+      unsubSubHistory();
     };
   }, []);
 
@@ -438,11 +450,65 @@ export const SuperAdminConsole = ({ initialTab }: { initialTab?: SuperAdminTab }
   const pharmacies = users.filter(u => u.role === 'pharmacy').length;
   const importers = users.filter(u => u.role === 'importer').length;
   const distributors = users.filter(u => u.role === 'distributor').length;
-  const activeSubs = users.filter(u => u.subscriptionStatus === 'active').length;
+
+  const isUserExpired = (u: any) => {
+    return u.subscriptionStatus === 'expired' || (u.subscriptionExpiryDate && Date.now() > u.subscriptionExpiryDate);
+  };
+
+  const isUserActive = (u: any) => {
+    return u.subscriptionStatus === 'active' && (!u.subscriptionExpiryDate || Date.now() <= u.subscriptionExpiryDate);
+  };
+
+  const totalRegisteredPharmacies = users.filter(u => u.role === 'pharmacy').length;
+  const totalRegisteredDistributors = users.filter(u => u.role === 'distributor').length;
+
+  const activePaidSubsCount = users.filter(u => 
+    (u.role === 'pharmacy' || u.role === 'importer' || u.role === 'distributor') && 
+    isUserActive(u) && 
+    !u.isFreeTrial
+  ).length;
+
+  const activeFreeTrialSubsCount = users.filter(u => 
+    (u.role === 'pharmacy' || u.role === 'importer' || u.role === 'distributor') && 
+    isUserActive(u) && 
+    u.isFreeTrial
+  ).length;
+
+  const expiredFreeTrialsCount = users.filter(u => 
+    (u.role === 'pharmacy' || u.role === 'importer' || u.role === 'distributor') && 
+    isUserExpired(u) && 
+    u.isFreeTrial
+  ).length;
+
+  const expiredPaidSubsCount = users.filter(u => 
+    (u.role === 'pharmacy' || u.role === 'importer' || u.role === 'distributor') && 
+    isUserExpired(u) && 
+    !u.isFreeTrial
+  ).length;
+
+  const totalReferralRewards = allSubscriptionHistory
+    .filter(h => h.action === 'Referral Reward')
+    .reduce((sum, h) => sum + parseInt(h.months.replace('+', '') || '0'), 0);
+
+  const totalAdminExtensions = allSubscriptionHistory
+    .filter(h => h.action === 'Admin Extension')
+    .reduce((sum, h) => sum + parseInt(h.months.replace('+', '') || '0'), 0);
+
+  const totalFreeMonths = (users.filter(u => u.role === 'pharmacy').length * 1) +
+    (users.filter(u => u.role === 'distributor').length * 2) +
+    totalAdminExtensions +
+    totalReferralRewards;
+
+  const topReferringOrgs = [...users]
+    .filter(u => (u.referralRewardMonthsEarned || 0) > 0)
+    .sort((a, b) => (b.referralRewardMonthsEarned || 0) - (a.referralRewardMonthsEarned || 0))
+    .slice(0, 5);
+
+  const activeSubs = activePaidSubsCount + activeFreeTrialSubsCount;
   
-  // Simulated revenue aggregations
+  // Simulated revenue aggregations (strictly excluding free trials)
   const totalSubscriptionRevenue = users.reduce((sum, u) => {
-    if (u.subscriptionStatus === 'active') {
+    if ((u.role === 'pharmacy' || u.role === 'importer' || u.role === 'distributor') && isUserActive(u) && !u.isFreeTrial) {
       const price = u.subscriptionType === 'premium' ? 5000 : u.subscriptionType === 'standard' ? 2500 : 1000;
       return sum + price;
     }
@@ -476,7 +542,7 @@ export const SuperAdminConsole = ({ initialTab }: { initialTab?: SuperAdminTab }
   const promoDiscountPercent = activePromo ? (activePromo.discountPercent || 0) : 0;
 
   const promoDrivenRevenue = users.reduce((sum, u) => {
-    if (u.subscriptionStatus === 'active') {
+    if ((u.role === 'pharmacy' || u.role === 'importer' || u.role === 'distributor') && isUserActive(u) && !u.isFreeTrial) {
       const basePrice = u.subscriptionType === 'premium' ? 5000 : u.subscriptionType === 'standard' ? 2500 : 0;
       if (basePrice > 0 && promoDiscountPercent > 0) {
         return sum + (basePrice * (1 - promoDiscountPercent / 100));
@@ -486,7 +552,7 @@ export const SuperAdminConsole = ({ initialTab }: { initialTab?: SuperAdminTab }
   }, 0);
 
   const couponDrivenRevenue = users.reduce((sum, u) => {
-    if (u.subscriptionStatus === 'active' && u.referredBy) {
+    if ((u.role === 'pharmacy' || u.role === 'importer' || u.role === 'distributor') && isUserActive(u) && !u.isFreeTrial && u.referredBy) {
       const matchedDiscount = systemSettings?.discounts?.find(
         d => d.code.toUpperCase() === u.referredBy?.toUpperCase() && d.active
       );
@@ -500,7 +566,7 @@ export const SuperAdminConsole = ({ initialTab }: { initialTab?: SuperAdminTab }
   }, 0);
 
   const promoDiscountsSaved = users.reduce((sum, u) => {
-    if (u.subscriptionStatus === 'active') {
+    if ((u.role === 'pharmacy' || u.role === 'importer' || u.role === 'distributor') && isUserActive(u) && !u.isFreeTrial) {
       const basePrice = u.subscriptionType === 'premium' ? 5000 : u.subscriptionType === 'standard' ? 2500 : 0;
       if (basePrice > 0 && promoDiscountPercent > 0) {
         return sum + (basePrice * (promoDiscountPercent / 100));
@@ -510,7 +576,7 @@ export const SuperAdminConsole = ({ initialTab }: { initialTab?: SuperAdminTab }
   }, 0);
 
   const couponDiscountsSaved = users.reduce((sum, u) => {
-    if (u.subscriptionStatus === 'active' && u.referredBy) {
+    if ((u.role === 'pharmacy' || u.role === 'importer' || u.role === 'distributor') && isUserActive(u) && !u.isFreeTrial && u.referredBy) {
       const matchedDiscount = systemSettings?.discounts?.find(
         d => d.code.toUpperCase() === u.referredBy?.toUpperCase() && d.active
       );
@@ -635,13 +701,57 @@ export const SuperAdminConsole = ({ initialTab }: { initialTab?: SuperAdminTab }
   const handleCreateOrg = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
-      await addDoc(collection(db, 'users'), {
+      const docRef = doc(collection(db, 'users'));
+      const orgId = docRef.id;
+      const isPharmacy = newOrg.role === 'pharmacy';
+      const isDistributor = newOrg.role === 'distributor';
+      const durationDays = isPharmacy ? 30 : isDistributor ? 60 : 30;
+      const expiryDate = Date.now() + durationDays * 24 * 60 * 60 * 1000;
+
+      const orgData = {
         ...newOrg,
+        uid: orgId,
         verificationStatus: 'approved',
         subscriptionStatus: 'active',
-        subscriptionExpiryDate: Date.now() + 30 * 24 * 60 * 60 * 1000,
+        subscriptionExpiryDate: expiryDate,
+        lastSubscriptionPaymentDate: Date.now(),
+        isFreeTrial: isPharmacy || isDistributor,
         createdAt: Date.now()
-      });
+      };
+
+      await setDoc(docRef, orgData);
+
+      if (isPharmacy || isDistributor) {
+        // Create the free trial subscription record in saas_invoices
+        const dateObj = new Date();
+        const billingPeriod = dateObj.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+        const invoiceId = `trial_${orgId}_${Date.now()}`;
+        
+        await setDoc(doc(db, 'saas_invoices', invoiceId), {
+          id: invoiceId,
+          pharmacyId: orgId,
+          pharmacyName: newOrg.displayName || (isPharmacy ? 'SaaS Pharmacy' : 'Distributor Partner'),
+          plan: isPharmacy ? 'Pharmacy Free Trial (30 Days)' : 'Distributor Free Trial (60 Days)',
+          basePrice: 0,
+          additionalBranchesCount: 0,
+          additionalBranchFee: 0,
+          additionalCharges: 0,
+          discountPercent: 0,
+          totalAmount: 0,
+          vatAmount: 0,
+          subtotal: 0,
+          currency: newOrg.currency || 'ETB',
+          status: 'active',
+          paymentStatus: 'Free Trial',
+          paymentAmount: 0,
+          subscriptionType: isPharmacy ? 'Pharmacy Free Trial (30 Days)' : 'Distributor Free Trial (60 Days)',
+          paymentMethod: 'System Generated',
+          billingPeriod: billingPeriod,
+          createdAt: Date.now(),
+          updatedAt: Date.now()
+        });
+      }
+
       toast.success(`${newOrg.displayName} created successfully!`);
       setShowAddOrgModal(false);
       createAuditLog('ORG_CREATE', `Created organization ${newOrg.displayName} as a ${newOrg.role}`);
@@ -710,7 +820,8 @@ export const SuperAdminConsole = ({ initialTab }: { initialTab?: SuperAdminTab }
         'expiry_settings',
         'notifications',
         'audit_logs',
-        'inventory_movements'
+        'inventory_movements',
+        'advertisements'
       ];
 
       // Delete all documents in non-user collections
@@ -755,8 +866,109 @@ export const SuperAdminConsole = ({ initialTab }: { initialTab?: SuperAdminTab }
       await updateDoc(doc(db, 'users', uid), { verificationStatus: status });
       toast.success(`Organization verification updated to ${status}`);
       createAuditLog('ORG_STATUS_UPDATE', `Updated status of ${name} to ${status}`);
-    } catch {
-      toast.error('Failed to modify status.');
+
+      if (status === 'approved') {
+        const userDocRef = doc(db, 'users', uid);
+        const userDocSnap = await getDoc(userDocRef);
+        if (userDocSnap.exists()) {
+          const userData = userDocSnap.data() as UserProfile;
+          
+          // Check if newly approved pharmacy was invited by a wholesaler
+          if (userData.invitedWholesalerId && userData.invitedCustomerId) {
+            const whCustRef = doc(db, 'wholesale_customers', userData.invitedCustomerId);
+            const whCustSnap = await getDoc(whCustRef);
+            if (whCustSnap.exists()) {
+              const customerData = whCustSnap.data();
+              
+              const updatedTimeline = [
+                ...(customerData.timeline || []),
+                {
+                  id: `convert_${Date.now()}`,
+                  type: 'conversion',
+                  title: 'A-Tech Registration Approved 🎉',
+                  description: `Automatically linked and converted from private profile. Linked to A-Tech UID: ${uid}.`,
+                  timestamp: Date.now()
+                }
+              ];
+              await updateDoc(whCustRef, {
+                isPrivate: false,
+                linkedOrgId: uid,
+                timeline: updatedTimeline
+              });
+
+              // Send real-time notification to the inviting wholesaler
+              const notifId = `invite_success_${userData.invitedCustomerId}_${Date.now()}`;
+              await setDoc(doc(db, 'notifications', notifId), {
+                id: notifId,
+                title: 'Customer Onboarded to A-Tech! 🚀',
+                message: `Your invited client "${customerData.businessName}" has registered and was approved. All historical CRM data and billing entries remain linked!`,
+                target: 'specific',
+                targetUids: [userData.invitedWholesalerId],
+                senderId: 'system',
+                createdAt: Date.now()
+              });
+            }
+          }
+          
+          if (userData.referrerUid && !userData.referralRewardApplied) {
+            const referrerUid = userData.referrerUid;
+            const referrerDocRef = doc(db, 'users', referrerUid);
+            const referrerDocSnap = await getDoc(referrerDocRef);
+            
+            if (referrerDocSnap.exists()) {
+              const referrerData = referrerDocSnap.data() as UserProfile;
+              
+              // Calculate new subscriptionExpiryDate: add 30 days
+              const currentExpiry = referrerData.subscriptionExpiryDate || Date.now();
+              const newExpiry = Math.max(currentExpiry, Date.now()) + (30 * 24 * 60 * 60 * 1000);
+              
+              // Update referrer user doc
+              await updateDoc(referrerDocRef, {
+                subscriptionExpiryDate: newExpiry,
+                subscriptionStatus: 'active',
+                referralRewardMonthsEarned: (referrerData.referralRewardMonthsEarned || 0) + 1,
+                pendingReferralPopups: arrayUnion({ id: uid, referredName: name })
+              });
+              
+              // Mark newly approved user as rewarded
+              await updateDoc(userDocRef, {
+                referralRewardApplied: true
+              });
+              
+              // Create Notification in notifications collection
+              const notifId = `ref_reward_${uid}_${Date.now()}`;
+              await setDoc(doc(db, 'notifications', notifId), {
+                id: notifId,
+                title: 'Referral Reward Approved! 🎉',
+                message: `You received 1 Free Month of subscription extension!\n\nReason: Your referred pharmacy/distributor ${name} was approved by the administration.\n\nDate: ${new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}`,
+                target: 'specific',
+                targetUids: [referrerUid],
+                senderId: 'system',
+                createdAt: Date.now()
+              });
+              
+              // Create Subscription History entry
+              const historyId = `history_ref_${uid}_${Date.now()}`;
+              await setDoc(doc(db, 'subscription_history', historyId), {
+                id: historyId,
+                orgId: referrerUid,
+                date: Date.now(),
+                action: 'Referral Reward',
+                months: '+1',
+                performedBy: 'System',
+                reason: `Referral approval of ${name}`
+              });
+              
+              // Create Audit Log for system
+              createAuditLog('REFERRAL_REWARD_APPLIED', `Granted 1 free month to referrer ${referrerData.displayName || referrerData.email} for referral of ${name}`);
+              toast.success(`Referral reward of +1 month automatically granted to referrer!`);
+            }
+          }
+        }
+      }
+    } catch (error: any) {
+      console.error('Failed to modify status:', error);
+      toast.error(`Failed to modify status: ${error.message || error}`);
     }
   };
 
@@ -774,6 +986,166 @@ export const SuperAdminConsole = ({ initialTab }: { initialTab?: SuperAdminTab }
       toast.error('Failed to extend subscription.');
     }
   };
+
+  const handleAddFreeMonths = async () => {
+    if (!selectedOrgForDetail) return;
+    if (extensionMonths <= 0 || extensionMonths > 24) {
+      toast.error("Please enter a valid number of months (1-24)");
+      return;
+    }
+    if (!extensionReason.trim() || extensionReason.trim().length < 10) {
+      toast.error("Please enter a clear reason (at least 10 characters)");
+      return;
+    }
+
+    try {
+      const uid = selectedOrgForDetail.uid;
+      const orgName = selectedOrgForDetail.pharmacyName || selectedOrgForDetail.importerName || selectedOrgForDetail.distributorName || selectedOrgForDetail.displayName || 'Unnamed Organization';
+      
+      const userDocRef = doc(db, 'users', uid);
+      const userDocSnap = await getDoc(userDocRef);
+      if (!userDocSnap.exists()) {
+        toast.error("Organization not found.");
+        return;
+      }
+      
+      const userData = userDocSnap.data() as UserProfile;
+      const currentExpiry = userData.subscriptionExpiryDate || Date.now();
+      const additionalMs = extensionMonths * 30 * 24 * 60 * 60 * 1000;
+      const newExpiry = Math.max(currentExpiry, Date.now()) + additionalMs;
+
+      // 1. Update Firestore User Profile
+      await updateDoc(userDocRef, {
+        subscriptionExpiryDate: newExpiry,
+        subscriptionStatus: 'active'
+      });
+
+      // 2. Save Subscription History entry
+      const historyId = `history_ext_${uid}_${Date.now()}`;
+      await setDoc(doc(db, 'subscription_history', historyId), {
+        id: historyId,
+        orgId: uid,
+        date: Date.now(),
+        action: 'Admin Extension',
+        months: `+${extensionMonths}`,
+        performedBy: auth.currentUser?.email || 'Super Admin',
+        reason: extensionReason.trim()
+      });
+
+      // 3. Create Audit Log
+      createAuditLog('SUBSCRIPTION_EXTEND', `Super Admin extended subscription of ${orgName} by ${extensionMonths} months. Reason: ${extensionReason.trim()}`);
+
+      // 4. Update local detail view state
+      setSelectedOrgForDetail({
+        ...userData,
+        subscriptionExpiryDate: newExpiry,
+        subscriptionStatus: 'active'
+      });
+
+      toast.success(`Extended subscription of ${orgName} by ${extensionMonths} months!`);
+      setShowAddFreeMonthsModal(false);
+      setExtensionMonths(1);
+      setExtensionReason('');
+    } catch (err: any) {
+      console.error('Failed to extend subscription:', err);
+      toast.error(`Extension failed: ${err.message || err}`);
+    }
+  };
+
+  const handleUpdateSubscriptionAccessField = async (
+    field: string,
+    value: any,
+    logAction: string,
+    logDetails: string
+  ) => {
+    if (!selectedOrgForDetail) return;
+    try {
+      const uid = selectedOrgForDetail.uid;
+      const userDocRef = doc(db, 'users', uid);
+      
+      const updateData = { [field]: value };
+      await updateDoc(userDocRef, updateData);
+      
+      // Update local state
+      const updatedOrg = {
+        ...selectedOrgForDetail,
+        [field]: value
+      };
+      setSelectedOrgForDetail(updatedOrg);
+      
+      // Log event to subscription_history for auditing
+      const historyId = `history_acl_${uid}_${Date.now()}`;
+      await setDoc(doc(db, 'subscription_history', historyId), {
+        id: historyId,
+        orgId: uid,
+        date: Date.now(),
+        action: logAction,
+        months: '0',
+        performedBy: auth.currentUser?.email || 'Super Admin',
+        reason: logDetails
+      });
+      
+      createAuditLog('SUBSCRIPTION_ACCESS_UPDATE', `${logAction}: ${logDetails} for organization ${uid}`);
+      toast.success("Subscription access configuration updated!");
+    } catch (error: any) {
+      console.error("Failed to update access control:", error);
+      toast.error(`Failed to update settings: ${error.message || error}`);
+    }
+  };
+
+  const handleToggleSuspendOrg = async () => {
+    if (!selectedOrgForDetail) return;
+    const uid = selectedOrgForDetail.uid;
+    const currentStatus = selectedOrgForDetail.verificationStatus;
+    const nextStatus = currentStatus === 'suspended' ? 'approved' : 'suspended';
+    
+    try {
+      await updateDoc(doc(db, 'users', uid), { verificationStatus: nextStatus });
+      setSelectedOrgForDetail({
+        ...selectedOrgForDetail,
+        verificationStatus: nextStatus
+      });
+      
+      const actionText = nextStatus === 'suspended' ? 'Suspend Organization' : 'Resume Organization';
+      const reasonText = nextStatus === 'suspended' ? 'Suspended by Super Admin' : 'Reactivated by Super Admin';
+      
+      // Log event
+      const historyId = `history_status_${uid}_${Date.now()}`;
+      await setDoc(doc(db, 'subscription_history', historyId), {
+        id: historyId,
+        orgId: uid,
+        date: Date.now(),
+        action: actionText,
+        months: '0',
+        performedBy: auth.currentUser?.email || 'Super Admin',
+        reason: reasonText
+      });
+      
+      createAuditLog('ORG_STATUS_UPDATE', `${actionText} for organization ${uid}`);
+      toast.success(`Organization ${nextStatus === 'suspended' ? 'suspended' : 'resumed'} successfully!`);
+    } catch (error: any) {
+      toast.error(`Operation failed: ${error.message || error}`);
+    }
+  };
+
+  useEffect(() => {
+    if (!selectedOrgForDetail?.uid) {
+      setSubHistory([]);
+      return;
+    }
+    const q = query(
+      collection(db, 'subscription_history'),
+      where('orgId', '==', selectedOrgForDetail.uid),
+      orderBy('date', 'desc')
+    );
+    const unsub = onSnapshot(q, (snap) => {
+      const list = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }) as SubscriptionHistoryEntry);
+      setSubHistory(list);
+    }, (err) => {
+      console.error('Failed to fetch subscription history:', err);
+    });
+    return unsub;
+  }, [selectedOrgForDetail?.uid]);
 
   const recalculateAllPharmaciesBilling = async () => {
     const pharmacies = users.filter(u => u.role === 'pharmacy');
@@ -794,16 +1166,46 @@ export const SuperAdminConsole = ({ initialTab }: { initialTab?: SuperAdminTab }
   };
 
   // Adjust Plan pricing globally
-  const handleUpdatePlanPrices = async (plan: 'basic' | 'standard' | 'premium', price: number) => {
-    if (!systemSettings) return;
+  const handleUpdatePlanPrices = async (plan: 'standard' | 'premium', price: number) => {
     try {
-      const updatedPrices = { ...(systemSettings.planPrices || {}), [plan]: price };
-      await updateDoc(doc(db, 'system_settings', 'main'), { planPrices: updatedPrices });
+      const updatedPrices = { ...(systemSettings?.planPrices || {}), [plan]: price };
+      const updatedCountryPricing = { ...(systemSettings?.countryPricing || {}) };
+      if (updatedCountryPricing['Ethiopia']) {
+        updatedCountryPricing['Ethiopia'] = {
+          ...updatedCountryPricing['Ethiopia'],
+          [plan]: price
+        };
+      }
+      await setDoc(doc(db, 'system_settings', 'main'), { 
+        planPrices: updatedPrices,
+        countryPricing: updatedCountryPricing
+      }, { merge: true });
       toast.success(`${plan.toUpperCase()} plan updated to ${price} ETB`);
       createAuditLog('PRICE_OVERRIDE', `Updated global ${plan} pricing plan to ${price} ETB`);
       await recalculateAllPharmaciesBilling();
-    } catch {
+    } catch (err) {
+      console.error('Error updating plan price:', err);
       toast.error('Failed to override SaaS plan pricing matrix.');
+    }
+  };
+
+  const handleUpdateDistributorMonthlyFee = async (price: number) => {
+    if (!systemSettings) return;
+    try {
+      await updateDoc(doc(db, 'system_settings', 'main'), { distributorMonthlyFee: price });
+      toast.success(`Distributor subscription fee updated to ${price} ETB`);
+      createAuditLog('PRICE_OVERRIDE', `Updated global distributor monthly fee to ${price} ETB`);
+      
+      const distributorsQuery = users.filter(u => u.role === 'distributor');
+      for (const dist of distributorsQuery) {
+        await updateDoc(doc(db, 'users', dist.uid), {
+          monthlyBillingAmount: price,
+          monthlyBillingVatAmount: price * 0.15,
+          monthlyBillingTotalAmountWithVat: price * 1.15
+        });
+      }
+    } catch {
+      toast.error('Failed to override distributor subscription fee.');
     }
   };
 
@@ -983,7 +1385,7 @@ export const SuperAdminConsole = ({ initialTab }: { initialTab?: SuperAdminTab }
     const countryPhar = totals.filter(u => u.role === 'pharmacy').length;
     const countryImp = totals.filter(u => u.role === 'importer').length;
     const countryDist = totals.filter(u => u.role === 'distributor').length;
-    const activeCountrySubs = totals.filter(u => u.subscriptionStatus === 'active').length;
+    const activeCountrySubs = totals.filter(u => (u.role === 'pharmacy' || u.role === 'importer' || u.role === 'distributor') && u.subscriptionStatus === 'active').length;
 
     const data = [
       ['Metric', 'Current Standing'],
@@ -1257,6 +1659,7 @@ export const SuperAdminConsole = ({ initialTab }: { initialTab?: SuperAdminTab }
                             <th className="px-4 py-3">Location</th>
                             <th className="px-4 py-3">Role</th>
                             <th className="px-4 py-3">Subscription</th>
+                            <th className="px-4 py-3">Remaining Time</th>
                             <th className="px-4 py-3 text-center">Uploaded File</th>
                             <th className="px-4 py-3">Verification</th>
                             <th className="px-4 py-3 text-right">Actions</th>
@@ -1286,7 +1689,12 @@ export const SuperAdminConsole = ({ initialTab }: { initialTab?: SuperAdminTab }
                             .map((u) => (
                               <tr key={u.uid} className="hover:bg-slate-50/50 dark:hover:bg-slate-800/10">
                                 <td className="px-4 py-3">
-                                  <p className="font-bold text-slate-900 dark:text-white">{u.pharmacyName || u.importerName || u.distributorName || u.displayName || 'Unnamed Organization'}</p>
+                                  <button
+                                    onClick={() => setSelectedOrgForDetail(u)}
+                                    className="text-left font-bold text-slate-900 dark:text-white hover:text-blue-600 dark:hover:text-blue-400 cursor-pointer focus:outline-none transition-colors"
+                                  >
+                                    {u.pharmacyName || u.importerName || u.distributorName || u.displayName || 'Unnamed Organization'}
+                                  </button>
                                   <p className="text-[10px] text-slate-400 font-mono tracking-wider">{u.email}</p>
                                 </td>
                                 <td className="px-4 py-3">
@@ -1297,6 +1705,56 @@ export const SuperAdminConsole = ({ initialTab }: { initialTab?: SuperAdminTab }
                                 </td>
                                 <td className="px-4 py-3 font-mono">
                                   <span className={`font-bold ${u.subscriptionStatus === 'active' ? 'text-green-600' : 'text-red-500'}`}>{u.subscriptionType?.toUpperCase() || 'BASIC'}</span>
+                                </td>
+                                <td className="px-4 py-3">
+                                  {(() => {
+                                    const expiryDate = u.subscriptionExpiryDate || (() => {
+                                      const baseTime = u.createdAt || Date.now();
+                                      const durationDays = (u.role === 'distributor' || u.role === 'importer') ? 60 : 30;
+                                      return baseTime + durationDays * 24 * 60 * 60 * 1000;
+                                    })();
+                                    const now = Date.now();
+                                    const msRemaining = expiryDate - now;
+                                    const daysRemaining = Math.ceil(msRemaining / (1000 * 60 * 60 * 24));
+
+                                    let remainingText = '';
+                                    let textClass = '';
+                                    
+                                    if (msRemaining <= 0) {
+                                      remainingText = 'Subscription Expired';
+                                      textClass = 'text-red-500 dark:text-red-400 font-bold';
+                                    } else {
+                                      if (daysRemaining >= 30) {
+                                        const months = Math.floor(daysRemaining / 30);
+                                        const days = daysRemaining % 30;
+                                        remainingText = `${months} Month${months > 1 ? 's' : ''}${days > 0 ? ` ${days} Day${days > 1 ? 's' : ''}` : ''} left`;
+                                      } else {
+                                        remainingText = `${daysRemaining} Day${daysRemaining > 1 ? 's' : ''} left`;
+                                      }
+                                      textClass = daysRemaining < 7 
+                                        ? 'text-amber-600 dark:text-amber-400 font-bold animate-pulse' 
+                                        : 'text-emerald-600 dark:text-emerald-400 font-semibold';
+                                    }
+
+                                    return (
+                                      <div className="flex flex-col gap-1">
+                                        <span className={`text-[11px] font-bold ${textClass}`}>{remainingText}</span>
+                                        <button
+                                          onClick={() => {
+                                            setSelectedOrgForDetail(u);
+                                            setExtensionMonths(1);
+                                            setExtensionReason('Administrative extension for goodwill support');
+                                            setShowAddFreeMonthsModal(true);
+                                          }}
+                                          className="px-2 py-0.5 bg-blue-50 hover:bg-blue-100 dark:bg-blue-950/20 dark:hover:bg-blue-900/40 text-blue-600 dark:text-blue-400 font-bold rounded text-[9px] flex items-center gap-1 cursor-pointer border border-blue-100 dark:border-blue-900/25 transition-all w-fit shrink-0 hover:scale-105 active:scale-95"
+                                          title="Add free subscription months"
+                                        >
+                                          <Sparkles size={9} />
+                                          <span>+ Add Month</span>
+                                        </button>
+                                      </div>
+                                    );
+                                  })()}
                                 </td>
                                 <td className="px-4 py-3 text-center">
                                   <button
@@ -1398,7 +1856,7 @@ export const SuperAdminConsole = ({ initialTab }: { initialTab?: SuperAdminTab }
                           <div className="flex justify-between text-xs">
                             <span className="text-slate-500">Active High-Tier Subscriptions</span>
                             <span className="font-bold font-mono text-slate-800 dark:text-white">
-                              {users.filter(u => u.country === selectedCountry && u.subscriptionStatus === 'active' && u.subscriptionType === 'premium').length} Premium
+                              {users.filter(u => u.country === selectedCountry && (u.role === 'pharmacy' || u.role === 'importer' || u.role === 'distributor') && u.subscriptionStatus === 'active' && u.subscriptionType === 'premium').length} Premium
                             </span>
                           </div>
                           <div className="flex justify-between text-xs">
@@ -1565,10 +2023,99 @@ export const SuperAdminConsole = ({ initialTab }: { initialTab?: SuperAdminTab }
                       <p className="text-xs text-slate-400">Toggle pricing overrides and postponed expirations check</p>
                     </div>
 
-                    {/* Subscription billing details cards */}
+                    {/* Subscription Metrics Breakdown Bento Grid */}
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4">
+                      <div className="bg-slate-50 dark:bg-slate-800/40 p-4 rounded-2xl border border-slate-100 dark:border-slate-800 flex flex-col justify-between">
+                        <div>
+                          <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest block">Registered Pharmacies</span>
+                          <span className="text-2xl font-black text-slate-900 dark:text-white font-mono mt-1 block">{totalRegisteredPharmacies}</span>
+                        </div>
+                        <span className="text-[9px] text-slate-500 mt-2 block">Total pharmacy hubs</span>
+                      </div>
+
+                      <div className="bg-slate-50 dark:bg-slate-800/40 p-4 rounded-2xl border border-slate-100 dark:border-slate-800 flex flex-col justify-between">
+                        <div>
+                          <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest block">Registered Distributors</span>
+                          <span className="text-2xl font-black text-slate-900 dark:text-white font-mono mt-1 block">{totalRegisteredDistributors}</span>
+                        </div>
+                        <span className="text-[9px] text-slate-500 mt-2 block">Total distributor hubs</span>
+                      </div>
+
+                      <div className="bg-slate-50 dark:bg-slate-800/40 p-4 rounded-2xl border border-slate-100 dark:border-slate-800 flex flex-col justify-between">
+                        <div>
+                          <span className="text-[10px] font-bold text-emerald-500 uppercase tracking-widest block">Active Paid Subs</span>
+                          <span className="text-2xl font-black text-slate-900 dark:text-white font-mono mt-1 block">{activePaidSubsCount}</span>
+                        </div>
+                        <span className="text-[9px] text-emerald-600/80 mt-2 block">Recurring revenue drivers</span>
+                      </div>
+
+                      <div className="bg-slate-50 dark:bg-slate-800/40 p-4 rounded-2xl border border-slate-100 dark:border-slate-800 flex flex-col justify-between">
+                        <div>
+                          <span className="text-[10px] font-bold text-blue-500 uppercase tracking-widest block">Active Free Trials</span>
+                          <span className="text-2xl font-black text-slate-900 dark:text-white font-mono mt-1 block">{activeFreeTrialSubsCount}</span>
+                        </div>
+                        <span className="text-[9px] text-blue-600/80 mt-2 block">Non-paid active periods</span>
+                      </div>
+
+                      <div className="bg-slate-50 dark:bg-slate-800/40 p-4 rounded-2xl border border-slate-100 dark:border-slate-800 flex flex-col justify-between">
+                        <div>
+                          <span className="text-[10px] font-bold text-slate-500 uppercase tracking-widest block">Expired Free Trials</span>
+                          <span className="text-2xl font-black text-slate-900 dark:text-white font-mono mt-1 block">{expiredFreeTrialsCount}</span>
+                        </div>
+                        <span className="text-[9px] text-slate-500 mt-2 block">Completed trial cycles</span>
+                      </div>
+
+                      <div className="bg-slate-50 dark:bg-slate-800/40 p-4 rounded-2xl border border-slate-100 dark:border-slate-800 flex flex-col justify-between">
+                        <div>
+                          <span className="text-[10px] font-bold text-red-500 uppercase tracking-widest block">Expired Paid Subs</span>
+                          <span className="text-2xl font-black text-slate-900 dark:text-white font-mono mt-1 block">{expiredPaidSubsCount}</span>
+                        </div>
+                        <span className="text-[9px] text-red-600/80 mt-2 block">Lapsed paid agreements</span>
+                      </div>
+                    </div>
+
+                    {/* Promotional Benefit Analytics Section */}
                     <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                      {['basic', 'standard', 'premium'].map((tier) => {
-                        const price = systemSettings?.planPrices?.[tier as 'basic' | 'standard' | 'premium'] || 1000;
+                      {/* Card 1: Total Referral Rewards */}
+                      <div className="bg-slate-50 dark:bg-slate-800/40 p-5 rounded-2xl border border-slate-100 dark:border-slate-800 flex flex-col justify-between">
+                        <div>
+                          <span className="text-[10px] font-bold text-amber-500 uppercase tracking-widest block">Total Referral Rewards</span>
+                          <span className="text-2xl font-black text-slate-900 dark:text-white font-mono mt-1 block">+{totalReferralRewards} Month{totalReferralRewards !== 1 ? 's' : ''}</span>
+                        </div>
+                        <span className="text-[9px] text-slate-500 mt-2 block">Promotional months earned by referrers</span>
+                      </div>
+
+                      {/* Card 2: Total Free/Promo Months */}
+                      <div className="bg-slate-50 dark:bg-slate-800/40 p-5 rounded-2xl border border-slate-100 dark:border-slate-800 flex flex-col justify-between">
+                        <div>
+                          <span className="text-[10px] font-bold text-blue-500 uppercase tracking-widest block">Total Free & Promo Months</span>
+                          <span className="text-2xl font-black text-slate-900 dark:text-white font-mono mt-1 block">{totalFreeMonths} Month{totalFreeMonths !== 1 ? 's' : ''}</span>
+                        </div>
+                        <span className="text-[9px] text-slate-500 mt-2 block">Combined trial, referral, & admin months</span>
+                      </div>
+
+                      {/* Card 3: Top Referring Pharmacies/Distributors */}
+                      <div className="bg-slate-50 dark:bg-slate-800/40 p-5 rounded-2xl border border-slate-100 dark:border-slate-800">
+                        <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest block mb-2">Top Referring Entities</span>
+                        {topReferringOrgs.length === 0 ? (
+                          <p className="text-xs text-slate-400 italic mt-1">No referrals recorded yet</p>
+                        ) : (
+                          <div className="space-y-1.5 max-h-[90px] overflow-y-auto pr-1">
+                            {topReferringOrgs.map((org) => (
+                              <div key={org.uid} className="flex justify-between text-[11px] font-medium text-slate-700 dark:text-slate-300">
+                                <span className="truncate max-w-[150px]">{org.pharmacyName || org.distributorName || org.displayName}</span>
+                                <span className="font-bold text-amber-600 font-mono">+{org.referralRewardMonthsEarned} mos</span>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Subscription billing details cards */}
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      {['standard', 'premium'].map((tier) => {
+                        const price = systemSettings?.planPrices?.[tier as 'standard' | 'premium'] || (tier === 'standard' ? 1200 : 3000);
                         return (
                           <div key={tier} className="bg-slate-50 dark:bg-slate-800/40 p-5 rounded-2xl border border-slate-100 dark:border-slate-800">
                             <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">{tier} Plan Config</span>
@@ -1594,6 +2141,36 @@ export const SuperAdminConsole = ({ initialTab }: { initialTab?: SuperAdminTab }
                           </div>
                         );
                       })}
+                    </div>
+
+                    {/* Distributor Subscription Configuration Panel */}
+                    <div className="bg-slate-50 dark:bg-slate-800/40 p-6 rounded-2xl border border-slate-100 dark:border-slate-800" id="distributor-sub-panel">
+                      <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest block mb-1">Distributor Subscriptions</span>
+                      <h3 className="text-sm font-bold text-slate-950 dark:text-white mb-2">Unified Distributor Subscription Fee</h3>
+                      <p className="text-xs text-slate-500 mb-4">Set the monthly price charged for the single unified Distributor subscription plan.</p>
+                      
+                      <div className="text-xl font-extrabold text-blue-600 mb-4 font-mono">
+                        {(systemSettings?.distributorMonthlyFee ?? 1500).toLocaleString()} {systemSettings?.branchPricingCurrency ?? 'ETB'} / month
+                      </div>
+
+                      <div className="flex gap-2 max-w-sm">
+                        <input 
+                          type="number" 
+                          placeholder="e.g. 1500" 
+                          id="distributor-fee-input"
+                          defaultValue={systemSettings?.distributorMonthlyFee ?? 1500}
+                          className="w-full px-3 py-2 bg-white dark:bg-slate-700 text-xs rounded-xl border border-slate-200 text-slate-850 dark:text-white font-bold"
+                        />
+                        <button 
+                          onClick={() => {
+                            const val = (document.getElementById('distributor-fee-input') as HTMLInputElement)?.value;
+                            if (val) handleUpdateDistributorMonthlyFee(parseInt(val));
+                          }}
+                          className="px-4 py-2 bg-blue-600 text-white rounded-xl text-xs font-bold hover:bg-blue-700 cursor-pointer shrink-0"
+                        >
+                          Save Fee
+                        </button>
+                      </div>
                     </div>
 
                     {/* Branch Pricing & Currency Configuration Panel */}
@@ -1872,7 +2449,7 @@ export const SuperAdminConsole = ({ initialTab }: { initialTab?: SuperAdminTab }
                       <div className="flex justify-between items-center">
                         <div>
                           <h3 className="text-sm font-bold text-slate-900 dark:text-white">Active SaaS Subscription Invoices</h3>
-                          <p className="text-xs text-slate-500 dark:text-slate-400">Review and verify B2B SaaS monthly billing invoices across all pharmacy branches.</p>
+                          <p className="text-xs text-slate-500 dark:text-slate-400">Review and verify B2B SaaS monthly billing invoices across all pharmacy branches (paid/billable only).</p>
                         </div>
                         <button
                           onClick={recalculateAllPharmaciesBilling}
@@ -1882,8 +2459,8 @@ export const SuperAdminConsole = ({ initialTab }: { initialTab?: SuperAdminTab }
                         </button>
                       </div>
 
-                      {saasInvoices.length === 0 ? (
-                        <p className="text-xs text-slate-400 italic">No SaaS invoices generated in the system yet.</p>
+                      {saasInvoices.filter(inv => inv.paymentStatus !== 'Free Trial').length === 0 ? (
+                        <p className="text-xs text-slate-400 italic">No billable SaaS invoices generated in the system yet.</p>
                       ) : (
                         <div className="overflow-x-auto">
                           <table className="w-full text-left border-collapse text-xs">
@@ -1900,7 +2477,7 @@ export const SuperAdminConsole = ({ initialTab }: { initialTab?: SuperAdminTab }
                               </tr>
                             </thead>
                             <tbody className="divide-y divide-slate-100 dark:divide-slate-800/50">
-                              {saasInvoices.map((inv) => {
+                              {saasInvoices.filter(inv => inv.paymentStatus !== 'Free Trial').map((inv) => {
                                 const sub = inv.subtotal ?? (inv.vatAmount ? inv.totalAmount - inv.vatAmount : inv.totalAmount / 1.15);
                                 const vt = inv.vatAmount ?? (inv.totalAmount - sub);
                                 return (
@@ -1949,6 +2526,71 @@ export const SuperAdminConsole = ({ initialTab }: { initialTab?: SuperAdminTab }
                       )}
                     </div>
 
+                    {/* Free Trial Subscriptions Panel */}
+                    <div className="bg-white dark:bg-slate-900 p-6 rounded-2xl border border-slate-200 dark:border-slate-800 space-y-4">
+                      <div>
+                        <h3 className="text-sm font-bold text-slate-900 dark:text-white font-sans">Active & Historical Free Trial Subscriptions</h3>
+                        <p className="text-xs text-slate-500 dark:text-slate-400 font-sans">Track all 1-month (Pharmacy) and 2-month (Distributor) complimentary system-activated subscriptions.</p>
+                      </div>
+
+                      {saasInvoices.filter(inv => inv.paymentStatus === 'Free Trial').length === 0 ? (
+                        <p className="text-xs text-slate-400 italic font-sans">No free trial subscriptions recorded in the system.</p>
+                      ) : (
+                        <div className="overflow-x-auto">
+                          <table className="w-full text-left border-collapse text-xs font-sans">
+                            <thead>
+                              <tr className="border-b border-slate-100 dark:border-slate-800 text-[10px] text-slate-400 uppercase tracking-widest font-extrabold">
+                                <th className="py-2.5">Trial ID</th>
+                                <th className="py-2.5">Organization</th>
+                                <th className="py-2.5">Subscription Type</th>
+                                <th className="py-2.5">Payment Status</th>
+                                <th className="py-2.5">Payment Amount</th>
+                                <th className="py-2.5">Payment Method</th>
+                                <th className="py-2.5">Start Period</th>
+                                <th className="py-2.5 text-right">Status</th>
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y divide-slate-100 dark:divide-slate-800/50">
+                              {saasInvoices.filter(inv => inv.paymentStatus === 'Free Trial').map((inv) => {
+                                return (
+                                  <tr key={inv.id} className="hover:bg-slate-50/50 dark:hover:bg-slate-800/10">
+                                    <td className="py-3 font-mono text-[10px] text-slate-500 dark:text-slate-400">{inv.id}</td>
+                                    <td className="py-3 font-bold text-slate-800 dark:text-slate-200">
+                                      {inv.pharmacyName || 'SaaS Pharmacy'}
+                                    </td>
+                                    <td className="py-3 text-slate-600 dark:text-slate-350 font-medium font-mono text-[10px]">
+                                      {inv.subscriptionType || inv.plan}
+                                    </td>
+                                    <td className="py-3">
+                                      <span className="px-2 py-0.5 text-[9px] font-black uppercase rounded bg-blue-50 dark:bg-blue-950/20 text-blue-600 dark:text-blue-400">
+                                        {inv.paymentStatus || 'Free Trial'}
+                                      </span>
+                                    </td>
+                                    <td className="py-3 font-mono text-slate-500 dark:text-slate-400">
+                                      {inv.paymentAmount ?? 0} ETB
+                                    </td>
+                                    <td className="py-3 text-slate-500 dark:text-slate-400 font-medium">
+                                      {inv.paymentMethod || 'System Generated'}
+                                    </td>
+                                    <td className="py-3 text-slate-500 dark:text-slate-400">{inv.billingPeriod}</td>
+                                    <td className="py-3 text-right">
+                                      <span className={`px-2 py-0.5 text-[9px] font-black uppercase rounded ${
+                                        inv.status === 'active' || inv.status === 'paid'
+                                          ? 'bg-green-50 dark:bg-green-950/20 text-green-600 dark:text-green-400'
+                                          : 'bg-red-50 dark:bg-red-950/20 text-red-600 dark:text-red-400'
+                                      }`}>
+                                        {inv.status}
+                                      </span>
+                                    </td>
+                                  </tr>
+                                );
+                              })}
+                            </tbody>
+                          </table>
+                        </div>
+                      )}
+                    </div>
+
                     {/* Dynamic Subscription Customizer Admin Panel Section */}
                     <div className="p-6 bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 space-y-6">
                       <div>
@@ -1961,8 +2603,8 @@ export const SuperAdminConsole = ({ initialTab }: { initialTab?: SuperAdminTab }
 
                       {/* Selector tabs for current admin plan customizer */}
                       <div className="flex gap-2 p-1 bg-slate-100 dark:bg-slate-850 rounded-xl max-w-sm">
-                        {(['basic', 'standard', 'premium'] as const).map((planId) => {
-                          const aliases = { basic: 'Basic', standard: 'Professional', premium: 'Premium' };
+                        {(['standard', 'premium'] as const).map((planId) => {
+                          const aliases = { standard: 'Professional', premium: 'Premium' };
                           return (
                             <button
                               key={planId}
@@ -2481,11 +3123,11 @@ export const SuperAdminConsole = ({ initialTab }: { initialTab?: SuperAdminTab }
                         <div className="space-y-3 text-xs mt-4">
                           <div className="flex justify-between">
                             <span className="text-slate-400">Active Billable Premium Tiers</span>
-                            <span className="font-bold text-slate-900 dark:text-white font-mono">{users.filter(u => u.subscriptionType === 'premium' && u.subscriptionStatus === 'active').length}</span>
+                            <span className="font-bold text-slate-900 dark:text-white font-mono">{users.filter(u => (u.role === 'pharmacy' || u.role === 'importer' || u.role === 'distributor') && u.subscriptionType === 'premium' && isUserActive(u) && !u.isFreeTrial).length}</span>
                           </div>
                           <div className="flex justify-between">
                             <span className="text-slate-400">Active Billable Standard Tiers</span>
-                            <span className="font-bold text-slate-900 dark:text-white font-mono">{users.filter(u => u.subscriptionType === 'standard' && u.subscriptionStatus === 'active').length}</span>
+                            <span className="font-bold text-slate-900 dark:text-white font-mono">{users.filter(u => (u.role === 'pharmacy' || u.role === 'importer' || u.role === 'distributor') && u.subscriptionType === 'standard' && isUserActive(u) && !u.isFreeTrial).length}</span>
                           </div>
                           <div className="flex justify-between">
                             <span className="text-slate-400">Total Ecosystem Transaction Index</span>
@@ -3363,7 +4005,6 @@ export const SuperAdminConsole = ({ initialTab }: { initialTab?: SuperAdminTab }
                       value={newOrg.subscriptionType}
                       onChange={(e) => setNewOrg({...newOrg, subscriptionType: e.target.value as any})}
                     >
-                      <option value="basic">Basic Plan</option>
                       <option value="standard">Standard Plan</option>
                       <option value="premium">Premium Hub</option>
                     </select>
@@ -3656,6 +4297,417 @@ export const SuperAdminConsole = ({ initialTab }: { initialTab?: SuperAdminTab }
                   className="px-4 py-2 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-800 dark:text-white rounded-xl text-xs font-bold transition cursor-pointer"
                 >
                   Close Doc Deck
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* MODAL 4: DETAILED ORGANIZATION PROFILE & SUBSCRIPTION HISTORY */}
+        {selectedOrgForDetail && (() => {
+          const u = selectedOrgForDetail;
+          
+          // Remaining time calculations with safe dynamic default
+          const expiryDate = u.subscriptionExpiryDate || (() => {
+            const baseTime = u.createdAt || Date.now();
+            const durationDays = (u.role === 'distributor' || u.role === 'importer') ? 60 : 30;
+            return baseTime + durationDays * 24 * 60 * 60 * 1000;
+          })();
+          const now = Date.now();
+          const msRemaining = expiryDate - now;
+          const daysRemaining = Math.ceil(msRemaining / (1000 * 60 * 60 * 24));
+          
+          let subscriptionStatus: 'Active' | 'Expiring Soon' | 'Expired' = 'Expired';
+          let statusColor = 'text-red-500 bg-red-50 dark:bg-red-950/20';
+          let borderColor = 'border-red-200 dark:border-red-900/30';
+          
+          if (msRemaining > 0) {
+            if (daysRemaining < 7) {
+              subscriptionStatus = 'Expiring Soon';
+              statusColor = 'text-amber-600 bg-amber-50 dark:bg-amber-950/20';
+              borderColor = 'border-amber-200 dark:border-amber-900/30';
+            } else {
+              subscriptionStatus = 'Active';
+              statusColor = 'text-green-600 bg-green-50 dark:bg-green-950/20';
+              borderColor = 'border-green-200 dark:border-green-900/30';
+            }
+          }
+
+          // Format remaining time nicely
+          let remainingText = 'Subscription Expired';
+          if (msRemaining > 0) {
+            if (daysRemaining >= 30) {
+              const months = Math.floor(daysRemaining / 30);
+              const days = daysRemaining % 30;
+              remainingText = `${months} Month${months > 1 ? 's' : ''}${days > 0 ? ` ${days} Day${days > 1 ? 's' : ''}` : ''} left`;
+            } else {
+              remainingText = `${daysRemaining} Day${daysRemaining > 1 ? 's' : ''} left`;
+            }
+          }
+
+          const formattedExpiry = new Date(expiryDate).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
+          const formattedStart = u.lastSubscriptionPaymentDate ? new Date(u.lastSubscriptionPaymentDate).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' }) : new Date(u.createdAt || Date.now()).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
+
+          return (
+            <div className="fixed inset-0 z-50 bg-black/55 backdrop-blur-sm flex items-center justify-center p-4">
+              <div className="bg-white dark:bg-slate-905 border border-slate-200 dark:border-slate-800 rounded-3xl w-full max-w-3xl p-6 relative flex flex-col max-h-[90vh] shadow-2xl">
+                <button 
+                  onClick={() => setSelectedOrgForDetail(null)}
+                  className="absolute top-4 right-4 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 p-1 cursor-pointer z-10 transition-colors"
+                  title="Close panel"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+                
+                {/* Header */}
+                <div className="mb-6 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 border-b border-slate-100 dark:border-slate-800/60 pb-4">
+                  <div>
+                    <span className="text-[10px] font-black text-blue-600 dark:text-blue-400 uppercase tracking-widest bg-blue-50 dark:bg-blue-900/10 px-2.5 py-1 rounded-full">Organization Profile</span>
+                    <h3 className="text-xl font-black text-slate-900 dark:text-white mt-2">
+                      {u.pharmacyName || u.importerName || u.distributorName || u.displayName || 'Unnamed Organization'}
+                    </h3>
+                    <p className="text-xs text-slate-400 font-mono mt-0.5">{u.email} • ID: {u.uid}</p>
+                  </div>
+                  {onImpersonateOrg && (
+                    <button
+                      onClick={() => {
+                        onImpersonateOrg(u);
+                        setSelectedOrgForDetail(null);
+                        toast.success(`Now acting as ${u.pharmacyName || u.importerName || u.distributorName || u.displayName}`);
+                      }}
+                      className="px-4 py-2 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700 text-white rounded-xl text-xs font-bold transition flex items-center justify-center gap-1.5 shadow-lg shadow-purple-500/20 cursor-pointer active:scale-95 self-start sm:self-center"
+                    >
+                      <Sparkles size={14} />
+                      <span>Login as Organization</span>
+                    </button>
+                  )}
+                </div>
+
+                <div className="flex-1 overflow-y-auto pr-1 space-y-6">
+                  {/* Subscription Time Remaining Card */}
+                  <div className={`p-6 rounded-2xl border ${borderColor} bg-slate-50 dark:bg-slate-800/20 grid grid-cols-1 md:grid-cols-2 gap-6`}>
+                    <div className="space-y-4">
+                      <div>
+                        <span className="text-[10px] text-slate-400 uppercase tracking-wider block font-bold">Subscription Status</span>
+                        <span className={`px-2.5 py-1 rounded-full text-xs font-black inline-block mt-1 uppercase ${statusColor}`}>
+                          {subscriptionStatus}
+                        </span>
+                      </div>
+                      <div>
+                        <span className="text-[10px] text-slate-400 uppercase tracking-wider block font-bold">Plan / Subscription Type</span>
+                        <span className="text-sm font-black text-slate-800 dark:text-white uppercase font-mono block mt-0.5">
+                          {u.isFreeTrial 
+                            ? (u.role === 'distributor' ? 'Distributor Free Trial' : 'Pharmacy Free Trial') 
+                            : (u.subscriptionType?.toUpperCase() || 'BASIC PLAN')}
+                        </span>
+                      </div>
+                      <div>
+                        <span className="text-[10px] text-slate-400 uppercase tracking-wider block font-bold">Time Remaining</span>
+                        <span className={`text-base font-black font-mono block mt-0.5 ${subscriptionStatus === 'Expired' ? 'text-red-500' : subscriptionStatus === 'Expiring Soon' ? 'text-amber-500' : 'text-slate-900 dark:text-white'}`}>
+                          {remainingText}
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="space-y-4 md:border-l md:border-slate-100 dark:md:border-slate-800 md:pl-6">
+                      <div>
+                        <span className="text-[10px] text-slate-400 uppercase tracking-wider block font-bold">Start / Payment Date</span>
+                        <span className="text-sm font-semibold text-slate-700 dark:text-slate-300 block mt-0.5">{formattedStart}</span>
+                      </div>
+                      <div>
+                        <span className="text-[10px] text-slate-400 uppercase tracking-wider block font-bold">Expiration Date</span>
+                        <span className="text-sm font-semibold text-slate-700 dark:text-slate-300 block mt-0.5">{formattedExpiry}</span>
+                      </div>
+                      <div className="pt-2">
+                        <button
+                          onClick={() => setShowAddFreeMonthsModal(true)}
+                          className="w-full sm:w-auto px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold transition flex items-center justify-center gap-1.5 shadow-lg shadow-blue-500/20 cursor-pointer active:scale-95"
+                        >
+                          <Sparkles size={14} />
+                          <span>+ Add Free Months</span>
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Subscription Access Control Section */}
+                  <div className="p-6 rounded-2xl border border-slate-200 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-800/10 space-y-4">
+                    <div>
+                      <h4 className="text-sm font-black text-slate-950 dark:text-white uppercase tracking-wider">Subscription Access Control</h4>
+                      <p className="text-[11px] text-slate-500">Fine-tune individual subscriber behavior and grace period policies.</p>
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                      <div className="space-y-3">
+                        <div className="flex items-center justify-between p-2 rounded-xl bg-white dark:bg-slate-900 border border-slate-100 dark:border-slate-800/50">
+                          <div>
+                            <span className="text-xs font-bold text-slate-800 dark:text-slate-200 block">Read-Only Mode</span>
+                            <span className="text-[10px] text-slate-400 block">Allow read-only on expiry</span>
+                          </div>
+                          <button
+                            onClick={() => handleUpdateSubscriptionAccessField(
+                              'readOnlyEnabled',
+                              u.readOnlyEnabled === false ? true : false,
+                              'Toggle Read-Only Mode',
+                              `Changed Read-Only Mode availability on expiry to ${u.readOnlyEnabled === false ? 'enabled' : 'disabled'}`
+                            )}
+                            className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                              u.readOnlyEnabled !== false
+                                ? 'bg-green-100 text-green-700 dark:bg-green-950/40 dark:text-green-400'
+                                : 'bg-slate-100 text-slate-500 dark:bg-slate-800'
+                            }`}
+                          >
+                            {u.readOnlyEnabled !== false ? 'Enabled' : 'Disabled'}
+                          </button>
+                        </div>
+
+                        <div className="flex items-center justify-between p-2 rounded-xl bg-white dark:bg-slate-900 border border-slate-100 dark:border-slate-800/50">
+                          <div>
+                            <span className="text-xs font-bold text-slate-800 dark:text-slate-200 block">Grace Period</span>
+                            <span className="text-[10px] text-slate-400 block">Select length of read-only grace</span>
+                          </div>
+                          <select
+                            value={u.gracePeriodDays ?? 30}
+                            onChange={(e) => {
+                              const val = e.target.value === 'unlimited' ? 'unlimited' : parseInt(e.target.value);
+                              handleUpdateSubscriptionAccessField(
+                                'gracePeriodDays',
+                                val,
+                                'Update Grace Period',
+                                `Set subscription grace period duration to ${val === 'unlimited' ? 'Unlimited' : `${val} Days`}`
+                              );
+                            }}
+                            className="bg-slate-50 dark:bg-slate-800 border-none rounded-lg px-2 py-1 font-bold text-xs focus:ring-1 focus:ring-blue-500 cursor-pointer text-slate-850 dark:text-white"
+                          >
+                            <option value={0}>No Grace Period</option>
+                            <option value={7}>7 Days</option>
+                            <option value={14}>14 Days</option>
+                            <option value={30}>30 Days</option>
+                            <option value={60}>60 Days</option>
+                            <option value="unlimited">Unlimited</option>
+                          </select>
+                        </div>
+
+                        <div className="flex items-center justify-between p-2 rounded-xl bg-white dark:bg-slate-900 border border-slate-100 dark:border-slate-800/50">
+                          <div>
+                            <span className="text-xs font-bold text-slate-800 dark:text-slate-200 block">Allow Export Data</span>
+                            <span className="text-[10px] text-slate-400 block">Permit inventory/sales downloads</span>
+                          </div>
+                          <button
+                            onClick={() => handleUpdateSubscriptionAccessField(
+                              'allowExport',
+                              u.allowExport === false ? true : false,
+                              'Toggle Allow Export',
+                              `Changed expired data export permission to ${u.allowExport === false ? 'granted' : 'restricted'}`
+                            )}
+                            className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                              u.allowExport !== false
+                                ? 'bg-green-100 text-green-700 dark:bg-green-950/40 dark:text-green-400'
+                                : 'bg-slate-100 text-slate-500 dark:bg-slate-800'
+                            }`}
+                          >
+                            {u.allowExport !== false ? 'Allowed' : 'Denied'}
+                          </button>
+                        </div>
+                      </div>
+
+                      <div className="space-y-3">
+                        <div className="flex items-center justify-between p-2 rounded-xl bg-white dark:bg-slate-900 border border-slate-100 dark:border-slate-800/50">
+                          <div>
+                            <span className="text-xs font-bold text-slate-800 dark:text-slate-200 block">Allow Reports & Analytics</span>
+                            <span className="text-[10px] text-slate-400 block">Permit viewing of dynamic logs</span>
+                          </div>
+                          <button
+                            onClick={() => handleUpdateSubscriptionAccessField(
+                              'allowReports',
+                              u.allowReports === false ? true : false,
+                              'Toggle Allow Reports',
+                              `Changed expired report access permission to ${u.allowReports === false ? 'granted' : 'restricted'}`
+                            )}
+                            className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                              u.allowReports !== false
+                                ? 'bg-green-100 text-green-700 dark:bg-green-950/40 dark:text-green-400'
+                                : 'bg-slate-100 text-slate-500 dark:bg-slate-800'
+                            }`}
+                          >
+                            {u.allowReports !== false ? 'Allowed' : 'Denied'}
+                          </button>
+                        </div>
+
+                        <div className="flex items-center justify-between p-2 rounded-xl bg-white dark:bg-slate-900 border border-slate-100 dark:border-slate-800/50">
+                          <div>
+                            <span className="text-xs font-bold text-slate-800 dark:text-slate-200 block">Allow Dashboard View</span>
+                            <span className="text-[10px] text-slate-400 block">Permit main analytics summary page</span>
+                          </div>
+                          <button
+                            onClick={() => handleUpdateSubscriptionAccessField(
+                              'allowDashboard',
+                              u.allowDashboard === false ? true : false,
+                              'Toggle Allow Dashboard',
+                              `Changed expired dashboard permission to ${u.allowDashboard === false ? 'granted' : 'restricted'}`
+                            )}
+                            className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                              u.allowDashboard !== false
+                                ? 'bg-green-100 text-green-700 dark:bg-green-950/40 dark:text-green-400'
+                                : 'bg-slate-100 text-slate-500 dark:bg-slate-800'
+                            }`}
+                          >
+                            {u.allowDashboard !== false ? 'Allowed' : 'Denied'}
+                          </button>
+                        </div>
+
+                        <div className="grid grid-cols-2 gap-2">
+                          <button
+                            onClick={() => handleUpdateSubscriptionAccessField(
+                              'immediateLock',
+                              !u.immediateLock,
+                              u.immediateLock ? 'Restore Access' : 'Immediate Lock',
+                              u.immediateLock ? 'Revoked explicit system lockout constraint' : 'Enforced absolute real-time account suspension lockout'
+                            )}
+                            className={`py-1.5 rounded-xl text-[10px] font-black transition-all cursor-pointer flex items-center justify-center gap-1 border ${
+                              u.immediateLock
+                                ? 'bg-amber-50 border-amber-300 text-amber-700 dark:bg-amber-950/30'
+                                : 'bg-red-50 border-red-200 text-red-600 dark:bg-red-950/30 font-bold'
+                            }`}
+                          >
+                            {u.immediateLock ? <Unlock size={11} /> : <Lock size={11} />}
+                            {u.immediateLock ? 'Unlock / Restore' : 'Immediate Lock'}
+                          </button>
+
+                          <button
+                            onClick={handleToggleSuspendOrg}
+                            className={`py-1.5 rounded-xl text-[10px] font-black transition-all cursor-pointer flex items-center justify-center gap-1 border ${
+                              u.verificationStatus === 'suspended'
+                                ? 'bg-emerald-50 border-emerald-300 text-emerald-700 dark:bg-emerald-950/30 font-bold'
+                                : 'bg-slate-150 border-slate-300 text-slate-700 dark:bg-slate-800 font-bold'
+                            }`}
+                          >
+                            {u.verificationStatus === 'suspended' ? <Play size={11} /> : <Pause size={11} />}
+                            {u.verificationStatus === 'suspended' ? 'Resume Org' : 'Suspend Org'}
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Subscription History Section */}
+                  <div className="space-y-3">
+                    <h4 className="text-sm font-black text-slate-950 dark:text-white uppercase tracking-wider">Subscription History</h4>
+                    <div className="border border-slate-100 dark:border-slate-800/80 rounded-2xl overflow-hidden bg-white dark:bg-slate-950">
+                      <table className="w-full text-left text-xs text-slate-500 dark:text-slate-400">
+                        <thead className="text-[10px] text-slate-400 uppercase tracking-wider bg-slate-50 dark:bg-slate-800/30 border-b border-slate-100 dark:border-slate-800/50">
+                          <tr>
+                            <th className="px-4 py-3">Date</th>
+                            <th className="px-4 py-3">Action</th>
+                            <th className="px-4 py-3">Months</th>
+                            <th className="px-4 py-3">Performed By</th>
+                            <th className="px-4 py-3">Reason / Details</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-105 dark:divide-slate-800/40">
+                          {subHistory.length === 0 ? (
+                            <tr>
+                              <td className="px-4 py-3 font-mono text-slate-400">
+                                {new Date(u.createdAt || Date.now()).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
+                              </td>
+                              <td className="px-4 py-3 font-semibold text-slate-700 dark:text-slate-300">
+                                {u.isFreeTrial ? 'Initial Free Trial' : 'Initial Subscription'}
+                              </td>
+                              <td className="px-4 py-3 font-mono font-bold text-emerald-600">
+                                {u.role === 'distributor' ? '+2' : '+1'}
+                              </td>
+                              <td className="px-4 py-3 font-mono text-slate-500">System</td>
+                              <td className="px-4 py-3 text-slate-400 italic">Onboarding promotional subscription</td>
+                            </tr>
+                          ) : (
+                            subHistory.map((item) => (
+                              <tr key={item.id} className="hover:bg-slate-50/50 dark:hover:bg-slate-800/10">
+                                <td className="px-4 py-3 font-mono text-slate-500">
+                                  {new Date(item.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
+                                </td>
+                                <td className="px-4 py-3 font-bold text-slate-800 dark:text-slate-200">{item.action}</td>
+                                <td className={`px-4 py-3 font-mono font-black ${item.months.startsWith('-') ? 'text-red-500' : 'text-emerald-600'}`}>{item.months}</td>
+                                <td className="px-4 py-3 font-mono text-slate-500 truncate max-w-[120px]" title={item.performedBy}>{item.performedBy}</td>
+                                <td className="px-4 py-3 text-slate-400 font-medium" title={item.reason}>{item.reason || '-'}</td>
+                              </tr>
+                            ))
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="mt-6 pt-3 border-t border-slate-100 dark:border-slate-800 flex justify-end">
+                  <button 
+                    onClick={() => setSelectedOrgForDetail(null)}
+                    className="px-4 py-2 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-800 dark:text-white rounded-xl text-xs font-bold transition cursor-pointer"
+                  >
+                    Close Profile
+                  </button>
+                </div>
+              </div>
+            </div>
+          );
+        })()}
+
+        {/* MODAL 5: ADD FREE MONTHS FORM MODAL */}
+        {showAddFreeMonthsModal && selectedOrgForDetail && (
+          <div className="fixed inset-0 z-[60] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
+            <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl w-full max-w-md p-6 relative shadow-2xl space-y-6">
+              <div>
+                <h3 className="text-base font-black text-slate-900 dark:text-white uppercase tracking-wider flex items-center gap-2">
+                  <Sparkles className="text-blue-600" size={18} />
+                  <span>Extend Subscription</span>
+                </h3>
+                <p className="text-xs text-slate-400 mt-1">
+                  Grant promotional months to <span className="font-bold text-slate-700 dark:text-slate-200">{selectedOrgForDetail.pharmacyName || selectedOrgForDetail.importerName || selectedOrgForDetail.distributorName || selectedOrgForDetail.displayName}</span>.
+                </p>
+              </div>
+
+              <div className="space-y-4">
+                <div>
+                  <label className="text-[10px] uppercase font-black tracking-widest text-slate-400 block mb-1">Months to Add</label>
+                  <select
+                    value={extensionMonths}
+                    onChange={(e) => setExtensionMonths(parseInt(e.target.value))}
+                    className="w-full px-4 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 dark:text-white text-xs outline-none focus:border-blue-500 cursor-pointer"
+                  >
+                    {[1, 2, 3, 4, 5, 6, 12, 18, 24].map(m => (
+                      <option key={m} value={m}>{m} Month{m > 1 ? 's' : ''}</option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="text-[10px] uppercase font-black tracking-widest text-slate-400 block mb-1">Reason (At least 10 chars)</label>
+                  <textarea
+                    rows={3}
+                    placeholder="Provide a clear operational reason for granting these free months..."
+                    value={extensionReason}
+                    onChange={(e) => setExtensionReason(e.target.value)}
+                    className="w-full px-4 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 dark:text-white text-xs outline-none focus:border-blue-500 resize-none font-medium"
+                  />
+                  <span className="text-[9px] text-slate-400 block mt-1 text-right">{extensionReason.length}/10 chars min</span>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3 pt-2">
+                <button
+                  onClick={() => {
+                    setShowAddFreeMonthsModal(false);
+                    setExtensionMonths(1);
+                    setExtensionReason('');
+                  }}
+                  className="px-4 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 font-bold text-xs transition cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleAddFreeMonths}
+                  className="px-4 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 dark:bg-blue-500 dark:hover:bg-blue-600 text-white font-bold text-xs shadow-lg shadow-blue-500/20 transition cursor-pointer active:scale-95"
+                >
+                  Confirm Extension
                 </button>
               </div>
             </div>

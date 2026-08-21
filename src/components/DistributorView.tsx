@@ -50,6 +50,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, Legend, PieChart, Pie, Cell, LineChart, Line } from 'recharts';
 import jsPDF from 'jspdf';
 import { WholesaleAdsPortal } from './WholesaleAdsPortal';
+import CustomerManagementView from './CustomerManagementView';
 import 'jspdf-autotable';
 
 interface DistributorViewProps {
@@ -59,10 +60,11 @@ interface DistributorViewProps {
 }
 
 export default function DistributorView({ user, activeTab = 'dashboard', setActiveTab }: DistributorViewProps) {
-  const activeSegment: 'dashboard' | 'inventory' | 'orders' | 'deliveries' | 'warehouses' | 'analytics' | 'directory' | 'reports' | 'promotions' = (
+  const activeSegment: 'dashboard' | 'inventory' | 'orders' | 'deliveries' | 'warehouses' | 'analytics' | 'directory' | 'reports' | 'promotions' | 'customer-management' = (
     activeTab === 'dashboard' ? 'dashboard' :
     activeTab === 'my-products' ? 'inventory' :
     activeTab === 'orders' ? 'orders' :
+    activeTab === 'customer-management' ? 'customer-management' :
     activeTab === 'warehouses' ? 'warehouses' :
     activeTab === 'customers' ? 'directory' :
     activeTab === 'deliveries' ? 'deliveries' :
@@ -792,6 +794,12 @@ export default function DistributorView({ user, activeTab = 'dashboard', setActi
       icon: <Users size={24} />,
       actions: null
     },
+    'customer-management': {
+      title: "Wholesale Customer Management",
+      subtitle: "CRM, point-of-sale, analytics scoring, and registration conversions for your custom accounts.",
+      icon: <Users size={24} />,
+      actions: null
+    },
     promotions: {
       title: "Wholesale Campaigns & Promotions",
       subtitle: "Run banner advertisements, sponsor products, and analyze direct conversions.",
@@ -1350,6 +1358,10 @@ export default function DistributorView({ user, activeTab = 'dashboard', setActi
                     </div>
                   </div>
                 </div>
+              )}
+
+              {activeSegment === 'customer-management' && (
+                <CustomerManagementView user={user} />
               )}
 
               {/* ==================================== */}

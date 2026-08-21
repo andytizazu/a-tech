@@ -287,7 +287,7 @@ export default function WarehousesView({ user, branches = [] }: WarehousesViewPr
           pharmacyId: ownerId,
           lowStockThreshold: Number(receivingForm.lowStockThreshold),
           createdAt: Date.now(),
-          branchId: undefined // Stored at warehouse
+          branchId: null // Stored at warehouse
         };
         // Add warehouse specific properties
         (newProduct as any).warehouseId = selectedWarehouseId;
@@ -511,7 +511,7 @@ export default function WarehousesView({ user, branches = [] }: WarehousesViewPr
           id: destId,
           quantity: Number(quantity),
           createdAt: Date.now(),
-          branchId: undefined
+          branchId: null
         };
         (newProduct as any).warehouseId = targetWarehouseId;
         batch.set(doc(db, 'medicines', destId), newProduct);

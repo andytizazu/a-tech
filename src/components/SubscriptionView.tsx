@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { doc, updateDoc, collection, query, where, orderBy, onSnapshot } from 'firebase/firestore';
+import { doc, updateDoc, setDoc, collection, query, where, orderBy, onSnapshot } from 'firebase/firestore';
 import { db } from '../firebase';
 import { UserProfile, SystemSettings, SaaSInvoice } from '../types';
 import { getSubscriptionCost, PLAN_PRICES } from '../lib/billingEngine';
@@ -70,11 +70,11 @@ export const SubscriptionView = ({
 
   // Baseline Fallback New Subscription Plan configurations representing high pharmacy ecosystem fidelity
   const DEFAULT_PLANS = {
-    basic: {
-      id: 'basic',
-      name: 'Basic',
-      description: 'Ideal support for single location pharmacies, small stores and new setups starting active workflows.',
-      recommended: false,
+    standard: {
+      id: 'standard', // Maps to Professional Plan
+      name: 'Professional',
+      description: 'Engineered for expanding pharmacies and businesses running multiple operations seamlessly.',
+      recommended: true,
       features: [
         'Inventory Management',
         'Sales Management',
@@ -91,27 +91,7 @@ export const SubscriptionView = ({
         'Basic Reporting',
         'Receipt Printing',
         'User Management',
-        'Dashboard Analytics'
-      ],
-      limitations: [
-        'Branch Management & Multi-Outlet accounts',
-        'Branch-to-Branch Transfers & approvals',
-        'Advanced Inventory Analytics indicators',
-        'Logistics & Importers Distributor Ledger Node',
-        'Detailed Administrative Audit Operations'
-      ],
-      futureFeatures: [
-        'Standard Multi-user Audits Platform'
-      ],
-      enableFutureFeatures: false
-    },
-    standard: {
-      id: 'standard', // Maps to Professional Plan
-      name: 'Professional',
-      description: 'Engineered for expanding pharmacies and businesses running multiple operations seamlessly.',
-      recommended: true,
-      features: [
-        'Everything in Basic Plan',
+        'Dashboard Analytics',
         'Branch Management',
         'Multiple Branch Support',
         'Branch Billing Options',
@@ -181,43 +161,43 @@ export const SubscriptionView = ({
     {
       title: "Core Operations & POS",
       items: [
-        { name: "Inventory Management & Expiry Alerts", basic: true, standard: true, premium: true },
-        { name: "POS Sales Management", basic: true, standard: true, premium: true },
-        { name: "Customer Management & History", basic: true, standard: true, premium: true },
-        { name: "Country of Origin Tracking", basic: true, standard: true, premium: true },
-        { name: "Bin Card Audit Ledger", basic: true, standard: true, premium: true },
-        { name: "Purchase & Dispensing Conversion Factors", basic: true, standard: true, premium: true },
-        { name: "Barcode Scanner & Printer Support", basic: true, standard: true, premium: true },
+        { name: "Inventory Management & Expiry Alerts", standard: true, premium: true },
+        { name: "POS Sales Management", standard: true, premium: true },
+        { name: "Customer Management & History", standard: true, premium: true },
+        { name: "Country of Origin Tracking", standard: true, premium: true },
+        { name: "Bin Card Audit Ledger", standard: true, premium: true },
+        { name: "Purchase & Dispensing Conversion Factors", standard: true, premium: true },
+        { name: "Barcode Scanner & Printer Support", standard: true, premium: true },
       ]
     },
     {
       title: "Branches, Outlets & Collaboration",
       items: [
-        { name: "Multi-branch Network Registry", basic: false, standard: true, premium: true },
-        { name: "Branch Creation, Controls & Delete", basic: false, standard: true, premium: true },
-        { name: "Branch Performance Analytics Panels", basic: false, standard: true, premium: true },
-        { name: "Branch Inventory Live Visibility", basic: false, standard: true, premium: true },
-        { name: "User Accounts & Audit Trails", basic: false, standard: true, premium: true },
-        { name: "Branch Stock Transfers Workflow", basic: false, standard: false, premium: true },
-        { name: "Automatic Unified TRF Transfer IDs", basic: false, standard: false, premium: true },
-        { name: "Branch Transfer Audit logs", basic: false, standard: false, premium: true },
+        { name: "Multi-branch Network Registry", standard: true, premium: true },
+        { name: "Branch Creation, Controls & Delete", standard: true, premium: true },
+        { name: "Branch Performance Analytics Panels", standard: true, premium: true },
+        { name: "Branch Inventory Live Visibility", standard: true, premium: true },
+        { name: "User Accounts & Audit Trails", standard: true, premium: true },
+        { name: "Branch Stock Transfers Workflow", standard: false, premium: true },
+        { name: "Automatic Unified TRF Transfer IDs", standard: false, premium: true },
+        { name: "Branch Transfer Audit logs", standard: false, premium: true },
       ]
     },
     {
       title: "Premium Controls & AI Innovation",
       items: [
-        { name: "Warehouse Ledger Management", basic: false, standard: false, premium: true },
-        { name: "Supplier Performance, Lead-Time & Licensing", basic: false, standard: false, premium: true },
-        { name: "Regional & Cross-Country Reporting", basic: false, standard: false, premium: true },
-        { name: "Premium Multi-Zone Performance Logs", basic: false, standard: false, premium: true },
-        { name: "API Access & Unified External Ledger", basic: false, standard: false, premium: true },
-        { name: "Future AI Forecasting Engine Layer", basic: false, standard: false, premium: "Future Support Active" },
+        { name: "Warehouse Ledger Management", standard: false, premium: true },
+        { name: "Supplier Performance, Lead-Time & Licensing", standard: false, premium: true },
+        { name: "Regional & Cross-Country Reporting", standard: false, premium: true },
+        { name: "Premium Multi-Zone Performance Logs", standard: false, premium: true },
+        { name: "API Access & Unified External Ledger", standard: false, premium: true },
+        { name: "Future AI Forecasting Engine Layer", standard: false, premium: "Future Support Active" },
       ]
     }
   ];
 
-  // Merge Custom Admin Settings with Defaults for all 3 subscription plans
-  const getDynamicPlan = (planId: 'basic' | 'standard' | 'premium') => {
+  // Merge Custom Admin Settings with Defaults for subscription plans
+  const getDynamicPlan = (planId: 'standard' | 'premium') => {
     const defaultData = DEFAULT_PLANS[planId];
     const customData = settings?.plansCustomize?.[planId];
     return {
@@ -233,7 +213,6 @@ export const SubscriptionView = ({
   };
 
   const plans = [
-    getDynamicPlan('basic'),
     getDynamicPlan('standard'),
     getDynamicPlan('premium')
   ];
@@ -243,12 +222,17 @@ export const SubscriptionView = ({
 
   const handleRequestUpgrade = async (planId: string) => {
     try {
+      const expiryDate = Date.now() + (30 * 24 * 60 * 60 * 1000); // 30 days free/active
       await updateDoc(doc(db, 'users', user.uid), { 
-        pendingSubscriptionType: planId 
+        subscriptionType: planId,
+        subscriptionStatus: 'active',
+        subscriptionExpiryDate: expiryDate,
+        pendingSubscriptionType: null
       });
-      toast.success('Upgrade request sent to admin!');
+      toast.success(`Successfully activated ${planId.toUpperCase()} subscription!`);
     } catch (error) {
-      toast.error('Failed to send request');
+      console.error('Failed to upgrade subscription:', error);
+      toast.error('Failed to upgrade subscription');
     }
   };
 
@@ -265,6 +249,34 @@ export const SubscriptionView = ({
         lastSubscriptionPaymentDate: Date.now()
       });
       
+      if (user.role === 'distributor' || user.role === 'importer') {
+        const dateObj = new Date();
+        const billingPeriod = dateObj.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+        const invoiceId = `saas_inv_${user.uid}_${dateObj.getFullYear()}_${dateObj.getMonth() + 1}_${Date.now()}`;
+        const invoiceRef = doc(db, 'saas_invoices', invoiceId);
+        
+        const invoiceData = {
+          id: invoiceId,
+          pharmacyId: user.uid,
+          pharmacyName: user.distributorName || user.importerName || user.displayName || 'Distributor Partner',
+          plan: 'distributor_subscription',
+          basePrice: billingDetails.basePrice,
+          additionalBranchesCount: 0,
+          additionalBranchFee: 0,
+          additionalCharges: 0,
+          discountPercent: billingDetails.totalDiscountPercent,
+          subtotal: billingDetails.totalCost,
+          vatAmount: billingDetails.vatAmount,
+          totalAmount: billingDetails.totalCostWithVat,
+          currency: billingDetails.currency,
+          status: 'paid',
+          billingPeriod,
+          createdAt: Date.now(),
+          updatedAt: Date.now()
+        };
+        await setDoc(invoiceRef, invoiceData);
+      }
+      
       toast.success(`Successfully renewed SaaS for ${renewalMonths} month(s) with ${billingCycle} billing rate!`);
     } catch (error) {
       toast.error('Renewal failed');
@@ -276,6 +288,178 @@ export const SubscriptionView = ({
   const daysRemaining = user.subscriptionExpiryDate 
     ? Math.ceil((user.subscriptionExpiryDate - Date.now()) / (1000 * 60 * 60 * 24))
     : 0;
+
+  if (user.role === 'distributor' || user.role === 'importer') {
+    return (
+      <div className="p-8 max-w-7xl mx-auto space-y-12" id="distributor-subscription-container">
+        {/* Header */}
+        <div className="mb-2 flex flex-col md:flex-row justify-between items-start md:items-end gap-4">
+          <div>
+            <h1 className="text-3xl font-bold text-slate-900 dark:text-white" id="distributor-sub-title">Distributor Subscription Portal</h1>
+            <p className="text-slate-500 dark:text-slate-400 font-sans text-sm mt-1">
+              Monitor, manage, and renew your unified Logistics & Importers Distributor Ledger subscription.
+            </p>
+          </div>
+          {user.subscriptionExpiryDate && (
+            <div className={`px-4 py-2 rounded-xl text-xs font-bold ${daysRemaining <= 0 ? 'bg-red-50 text-red-600' : daysRemaining < 7 ? 'bg-amber-50 text-amber-600' : 'bg-green-50 text-green-600'}`} id="distributor-days-badge">
+              {daysRemaining <= 0 ? 'Subscription Expired' : `${daysRemaining} Days Remaining`}
+            </div>
+          )}
+        </div>
+
+        {/* Details and Renewal section */}
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+          <div className="lg:col-span-2 bg-gradient-to-r from-indigo-650 to-blue-700 rounded-3xl p-8 text-white flex flex-col justify-between shadow-xl relative overflow-hidden" id="distributor-current-plan-card">
+            <div className="absolute right-0 top-0 translate-x-12 -translate-y-12 w-48 h-48 bg-white/10 rounded-full blur-xl pointer-events-none"></div>
+            <div className="w-full relative z-10">
+              <p className="text-blue-200 font-medium mb-1 uppercase tracking-wider text-[10px]">Your active tier</p>
+              <h2 className="text-4xl font-black uppercase mb-3 flex items-center gap-3">
+                Distributor Subscription
+                <span className="text-xs bg-white/20 text-white px-3 py-1 rounded-full border border-white/20 lowercase">active</span>
+              </h2>
+              
+              <div className="space-y-2 border-t border-white/10 pt-4 mb-4">
+                <div className="flex justify-between text-sm">
+                  <span className="text-blue-100">Monthly Subscription Fee:</span>
+                  <span className="font-bold">{billingDetails.basePrice.toLocaleString()} {billingDetails.currency}/mo</span>
+                </div>
+                {billingDetails.totalDiscountPercent > 0 && (
+                  <div className="flex justify-between text-sm text-pink-300 font-bold">
+                    <span>SaaS Special Discount & Promo Applied:</span>
+                    <span>-{billingDetails.totalDiscountPercent}%</span>
+                  </div>
+                )}
+                <div className="flex justify-between text-base font-black border-t border-white/10 pt-2 text-white">
+                  <span>Total Cost (Vat Excl.):</span>
+                  <span>{billingDetails.totalCost.toLocaleString()} {billingDetails.currency}/mo</span>
+                </div>
+                <div className="flex justify-between text-sm border-t border-white/10 pt-1 text-blue-100">
+                  <span>VAT (15%):</span>
+                  <span>{billingDetails.vatAmount.toLocaleString()} {billingDetails.currency}/mo</span>
+                </div>
+                <div className="flex justify-between text-base font-black text-white">
+                  <span>Total Amount Due (VAT Incl.):</span>
+                  <span>{billingDetails.totalCostWithVat.toLocaleString()} {billingDetails.currency}/mo</span>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-3">
+                <span className="bg-white/20 px-3 py-1 rounded-full text-xs font-bold capitalize">
+                  Status: {user.subscriptionStatus || 'Active'}
+                </span>
+                {user.subscriptionExpiryDate && (
+                  <span className="text-blue-100 text-xs font-semibold">
+                    Renewal Date: {format(new Date(user.subscriptionExpiryDate), 'MMM dd, yyyy')}
+                  </span>
+                )}
+              </div>
+            </div>
+          </div>
+
+          <div className="bg-white dark:bg-slate-900 p-8 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-sm flex flex-col justify-between" id="distributor-renew-card">
+            <div>
+              <h3 className="text-base font-extrabold text-slate-900 dark:text-white flex items-center gap-2">
+                <Clock className="text-indigo-650" size={18} /> Instant billing renewal
+              </h3>
+              <p className="text-xs text-slate-500 dark:text-slate-400 mb-6 mt-1">Extend distributor subscription validity parameters.</p>
+              
+              <div className="space-y-4 mb-6 pt-2 border-t border-slate-100 dark:border-slate-800">
+                <div className="flex justify-between items-center text-xs">
+                  <span className="font-bold text-slate-400 uppercase">Renewal Duration</span>
+                  <select 
+                    value={renewalMonths} 
+                    onChange={(e) => setRenewalMonths(parseInt(e.target.value))}
+                    className="bg-slate-50 dark:bg-slate-800 border-none rounded-xl px-3 py-1.5 font-bold text-xs focus:ring-2 focus:ring-indigo-500 cursor-pointer text-slate-800 dark:text-white"
+                  >
+                    {[1, 3, 6, 12].map(m => (
+                      <option key={m} value={m}>{m} Month{m > 1 ? 's' : ''}</option>
+                    ))}
+                  </select>
+                </div>
+                <div className="space-y-2 border-t border-slate-100 dark:border-slate-800 pt-2 text-xs">
+                  <div className="flex justify-between items-center border-t border-slate-100 dark:border-slate-800 pt-1.5 font-extrabold">
+                    <span className="text-slate-500 uppercase">Total Price</span>
+                    <span className="font-black text-slate-900 dark:text-white text-base">
+                      {(billingDetails.totalCost * renewalMonths).toLocaleString()} {billingDetails.currency}
+                    </span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <button 
+              onClick={handleRenew}
+              disabled={isRenewing}
+              className="w-full bg-slate-900 hover:bg-slate-800 dark:bg-indigo-650 dark:hover:bg-indigo-700 text-white py-3 rounded-2xl font-bold text-xs transition-all shadow-lg flex items-center justify-center gap-2 disabled:opacity-50 cursor-pointer"
+              id="distributor-renew-btn"
+            >
+              {isRenewing ? <Clock className="animate-spin" size={16} /> : <Zap size={16} />}
+              {isRenewing ? 'Renewing Account State...' : 'Commit Renew Now'}
+            </button>
+          </div>
+        </div>
+
+        {/* Payment History */}
+        <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-8 rounded-[2.5rem] shadow-sm" id="distributor-history-card">
+          <div className="flex items-center gap-3 mb-3">
+            <div className="w-10 h-10 bg-indigo-50 dark:bg-indigo-950 text-indigo-600 dark:text-indigo-400 rounded-2xl flex items-center justify-center">
+              <CreditCard size={20} />
+            </div>
+            <div>
+              <h3 className="text-lg font-bold text-slate-900 dark:text-white">Subscription Payment History</h3>
+              <p className="text-xs text-slate-500 dark:text-slate-400 font-sans">View your past subscription renewal invoices and transaction ledgers.</p>
+            </div>
+          </div>
+          
+          {loadingInvoices ? (
+            <div className="py-8 flex justify-center"><div className="w-6 h-6 border-2 border-indigo-600 border-t-transparent rounded-full animate-spin"></div></div>
+          ) : invoices.length === 0 ? (
+            <div className="py-12 text-center">
+              <CreditCard size={40} className="mx-auto text-slate-300 dark:text-slate-700 mb-3 animate-pulse" />
+              <p className="font-bold text-sm text-slate-700 dark:text-slate-300">No active invoices registered for this account.</p>
+              <p className="text-xs text-slate-400 mt-1 font-sans">Ledgers appear automatically when branches are synced.</p>
+            </div>
+          ) : (
+            <div className="overflow-x-auto mt-6">
+              <table className="w-full text-left border-collapse text-xs">
+                <thead>
+                  <tr className="border-b border-slate-100 dark:border-slate-800 text-[10px] text-slate-400 uppercase tracking-widest font-extrabold">
+                    <th className="py-4">Invoice ID</th>
+                    <th className="py-4">Billing Month</th>
+                    <th className="py-4 font-black">Total Price</th>
+                    <th className="py-4">Status</th>
+                    <th className="py-4">Settle/Paid On</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100 dark:divide-slate-800/50">
+                  {invoices.map((inv) => {
+                    const total = inv.totalAmount ?? inv.subtotal ?? 0;
+                    return (
+                      <tr key={inv.id} className="hover:bg-slate-50/50 dark:hover:bg-slate-800/10">
+                        <td className="py-4 font-mono text-[10px] text-slate-500 dark:text-slate-400">{inv.id}</td>
+                        <td className="py-4 font-bold text-slate-800 dark:text-slate-200">{inv.billingPeriod}</td>
+                        <td className="py-4 font-black text-slate-900 dark:text-white">{total.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} {inv.currency}</td>
+                        <td className="py-4">
+                          <span className={`px-2.5 py-1 text-[9px] font-black uppercase rounded-lg ${
+                            inv.status === 'paid' ? 'bg-green-50 dark:bg-green-950/20 text-green-600 dark:text-green-400' : 'bg-red-50 dark:bg-red-950/20 text-red-600 dark:text-red-400'
+                          }`}>
+                            {inv.status}
+                          </span>
+                        </td>
+                        <td className="py-4 text-slate-400">
+                          {new Date(inv.updatedAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  }
 
   // Custom visual plan display details mapping for current billing cycles:
   const getCycleCost = (baseMonthPrice: number) => {
@@ -295,8 +479,8 @@ export const SubscriptionView = ({
           </p>
         </div>
         {user.subscriptionExpiryDate && (
-          <div className={`px-4 py-2 rounded-xl text-xs font-bold ${daysRemaining <= 3 ? 'bg-red-50 text-red-650' : 'bg-green-50 text-green-650'}`}>
-            {daysRemaining <= 0 ? 'Expired' : `${daysRemaining} Days Standing Remaining`}
+          <div className={`px-4 py-2 rounded-xl text-xs font-bold ${daysRemaining <= 0 ? 'bg-red-50 text-red-600' : daysRemaining < 7 ? 'bg-amber-50 text-amber-600' : 'bg-green-50 text-green-600'}`}>
+            {daysRemaining <= 0 ? 'Subscription Expired' : `${daysRemaining} Days Remaining`}
           </div>
         )}
       </div>
@@ -308,7 +492,7 @@ export const SubscriptionView = ({
           <div className="w-full relative z-10">
             <p className="text-blue-200 font-medium mb-1 uppercase tracking-wider text-[10px]">{t('current_plan')}</p>
             <h2 className="text-4xl font-black uppercase mb-3 flex items-center gap-3">
-              {plans.find(p => p.id === (user.subscriptionType || 'basic'))?.name || user.subscriptionType || 'Basic'} 
+              {plans.find(p => p.id === (user.subscriptionType || 'standard'))?.name || user.subscriptionType || 'Professional'} 
               <span className="text-xs bg-white/20 text-white px-3 py-1 rounded-full border border-white/20 lowercase">active</span>
             </h2>
             
@@ -424,7 +608,7 @@ export const SubscriptionView = ({
       </div>
 
       {/* Plan Cards Display Rendering */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-8 max-w-5xl mx-auto">
         {plans.map((plan) => {
           // Dynamic calculation relative to plan target
           const planCostDetails = getSubscriptionCost({
@@ -583,8 +767,7 @@ export const SubscriptionView = ({
             <thead>
               <tr className="border-b border-slate-200 dark:border-slate-800 text-[10px] font-black text-slate-400 uppercase tracking-widest bg-slate-50 dark:bg-slate-850/50">
                 <th className="py-3 px-4">Detailed Capability Specification</th>
-                <th className="py-3 px-4 text-center">Basic Plan</th>
-                <th className="py-3 px-4 text-center">Professional</th>
+                <th className="py-3 px-4 text-center">Professional (Standard)</th>
                 <th className="py-3 px-4 text-center">Premium</th>
               </tr>
             </thead>
@@ -592,7 +775,7 @@ export const SubscriptionView = ({
               {MATRIX_CATEGORIES.map((cat, ci) => (
                 <React.Fragment key={ci}>
                   <tr className="bg-slate-100/50 dark:bg-slate-800/10 font-black text-slate-800 dark:text-slate-300">
-                    <td colSpan={4} className="py-2.5 px-4 text-[10px] uppercase text-blue-650 tracking-wider">
+                    <td colSpan={3} className="py-2.5 px-4 text-[10px] uppercase text-blue-650 tracking-wider">
                       {cat.title}
                     </td>
                   </tr>
@@ -600,17 +783,6 @@ export const SubscriptionView = ({
                     <tr key={ii} className="hover:bg-slate-50/50 dark:hover:bg-slate-800/5 transition-all">
                       <td className="py-3 px-4 text-slate-700 dark:text-slate-300 font-medium">
                         {item.name}
-                      </td>
-                      <td className="py-3 px-4 text-center">
-                        {typeof item.basic === 'boolean' ? (
-                          item.basic ? (
-                            <Check className="mx-auto text-green-500 font-bold" size={16} />
-                          ) : (
-                            <X className="mx-auto text-slate-300" size={14} />
-                          )
-                        ) : (
-                          <span className="text-[10px] font-bold text-slate-500">{item.basic}</span>
-                        )}
                       </td>
                       <td className="py-3 px-4 text-center bg-blue-50/10 dark:bg-blue-950/5">
                         {typeof item.standard === 'boolean' ? (

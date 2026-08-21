@@ -13,7 +13,6 @@ import { UserProfile, SystemSettings, SaaSInvoice } from '../types';
 
 // Hardcoded fallback base prices matching PLAN_PRICES in App.tsx
 export const PLAN_PRICES = {
-  basic: 400,
   standard: 1200,
   premium: 3000
 };
@@ -28,31 +27,80 @@ export const getSubscriptionCost = (
   settings: SystemSettings | null, 
   totalBranchesCount: number
 ) => {
+  if (profile?.role === 'distributor' || profile?.role === 'importer') {
+    const currency = settings?.branchPricingCurrency || 'ETB';
+    const basePrice = settings?.distributorMonthlyFee ?? 1500;
+    const additionalBranches = 0;
+    const additionalBranchFee = 0;
+    const additionalCharges = 0;
+    const subtotal = basePrice;
+
+    let promoDiscountPercent = 0;
+    const activePromo = settings?.promotions?.find(p => p.active);
+    if (activePromo) {
+      promoDiscountPercent = activePromo.discountPercent || 0;
+    }
+
+    let couponDiscountPercent = 0;
+    if (profile.referredBy && settings?.discounts) {
+      const matchedDiscount = settings.discounts.find(
+        d => d.code.toUpperCase() === profile.referredBy?.toUpperCase() && d.active
+      );
+      if (matchedDiscount) {
+        couponDiscountPercent = matchedDiscount.percent || 0;
+      }
+    }
+
+    const totalDiscountPercent = Math.min(100, promoDiscountPercent + couponDiscountPercent);
+    const totalCost = subtotal * (1 - totalDiscountPercent / 100);
+    const vatAmount = totalCost * 0.15;
+    const totalCostWithVat = totalCost + vatAmount;
+
+    return {
+      basePrice,
+      additionalBranches,
+      additionalBranchFee,
+      additionalCharges,
+      subtotal,
+      promoDiscountPercent,
+      couponDiscountPercent,
+      totalDiscountPercent,
+      totalCost,
+      vatAmount,
+      totalCostWithVat,
+      currency
+    };
+  }
+
   const country = profile.country || 'Ethiopia';
-  const rawPlan = (profile.subscriptionType || 'basic') as string;
+  const rawPlan = (profile.subscriptionType || 'standard') as string;
   const rawPlanLower = rawPlan.toLowerCase();
-  const plan: 'basic' | 'standard' | 'premium' = 
-    rawPlanLower.includes('premium') || rawPlanLower.includes('enterprise') ? 'premium' : 
-    rawPlanLower.includes('standard') || rawPlanLower.includes('professional') || rawPlanLower.includes('pro') ? 'standard' : 'basic';
+  const plan: 'standard' | 'premium' = 
+    rawPlanLower.includes('premium') || rawPlanLower.includes('enterprise') ? 'premium' : 'standard';
   
-  // 1. Resolve Pricing Config & Overrides
+  // 1. Resolve Pricing Config & Overrides (Prioritizes Admin System Settings planPrices)
   let basePrice = 0;
   let additionalBranchFee = 300; // default fee
   let currency = 'ETB';
   
   if (settings) {
-    const countryConfig = settings.countryPricing?.[country];
-    if (countryConfig) {
-      basePrice = countryConfig[plan as 'basic' | 'standard' | 'premium'] ?? 0;
-      additionalBranchFee = countryConfig.additionalBranchFee ?? 0;
-      currency = countryConfig.currency || 'ETB';
+    if (settings.planPrices && settings.planPrices[plan] !== undefined) {
+      basePrice = Number(settings.planPrices[plan]);
+    } else if (settings.countryPricing?.[country]?.[plan] !== undefined) {
+      basePrice = Number(settings.countryPricing[country][plan]);
     } else {
-      basePrice = settings.planPrices?.[plan as 'basic' | 'standard' | 'premium'] ?? PLAN_PRICES[plan as 'basic' | 'standard' | 'premium'];
-      additionalBranchFee = settings.additionalBranchFee ?? 300;
-      currency = settings.branchPricingCurrency || 'ETB';
+      basePrice = PLAN_PRICES[plan];
     }
+
+    if (settings.additionalBranchFee !== undefined) {
+      additionalBranchFee = Number(settings.additionalBranchFee);
+    } else if (settings.countryPricing?.[country]?.additionalBranchFee !== undefined) {
+      additionalBranchFee = Number(settings.countryPricing[country].additionalBranchFee);
+    }
+
+    currency = settings.branchPricingCurrency || settings.countryPricing?.[country]?.currency || 'ETB';
   } else {
-    basePrice = PLAN_PRICES[plan as 'basic' | 'standard' | 'premium'];
+    basePrice = PLAN_PRICES[plan];
     additionalBranchFee = 300;
     currency = 'ETB';
   }
@@ -155,7 +203,7 @@ export const syncPharmacyBillingAndInvoices = async (pharmacyId: string): Promis
       id: invoiceId,
       pharmacyId,
       pharmacyName: profile.pharmacyName || profile.displayName || 'Pharmacy Partner',
-      plan: (String(profile.subscriptionType || 'basic').toLowerCase().includes('premium') || String(profile.subscriptionType || 'basic').toLowerCase().includes('enterprise')) ? 'premium' : (String(profile.subscriptionType || 'basic').toLowerCase().includes('standard') || String(profile.subscriptionType || 'basic').toLowerCase().includes('professional') || String(profile.subscriptionType || 'basic').toLowerCase().includes('pro') ? 'standard' : 'basic'),
+      plan: (String(profile.subscriptionType || 'standard').toLowerCase().includes('premium') || String(profile.subscriptionType || 'standard').toLowerCase().includes('enterprise')) ? 'premium' : 'standard',
       basePrice: billingDetails.basePrice,
       additionalBranchesCount: billingDetails.additionalBranches,
       additionalBranchFee: billingDetails.additionalBranchFee,
@@ -182,5 +230,27 @@ export const syncPharmacyBillingAndInvoices = async (pharmacyId: string): Promis
   } catch (error) {
     console.error(`[BillingEngine] Error in syncPharmacyBillingAndInvoices:`, error);
     throw error;
+  }
+};
+
+/**
+ * Recalculates and synchronizes billing and invoice profiles for all pharmacies in the system.
+ */
+export const recalculateAllPharmaciesBilling = async (): Promise<number> => {
+  try {
+    const usersSnap = await getDocs(query(collection(db, 'users'), where('role', '==', 'pharmacy')));
+    let count = 0;
+    for (const docSnap of usersSnap.docs) {
+      try {
+        await syncPharmacyBillingAndInvoices(docSnap.id);
+        count++;
+      } catch (err) {
+        console.error(`Failed to sync billing for pharmacy ${docSnap.id}:`, err);
+      }
+    }
+    return count;
+  } catch (err) {
+    console.error('Error recalculating all pharmacies billing:', err);
+    return 0;
   }
 };
