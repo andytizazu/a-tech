@@ -111,7 +111,8 @@ import {
   Award,
   TrendingDown,
   Sparkles,
-  Pill
+  Pill,
+  Receipt
 } from 'lucide-react';
 
 import { WholesaleAdsPortal } from './components/WholesaleAdsPortal';
@@ -6374,6 +6375,7 @@ const Sidebar = ({
     { id: 'super-admin-subscriptions', label: 'Subscription Hub', icon: DollarSign, roles: ['admin'] },
     { id: 'super-admin-marketplace', label: 'Marketplace Admin', icon: Truck, roles: ['admin'] },
     { id: 'super-admin-pharmacy-wholesales', label: 'Pharmacy Whole Sales', icon: Building2, roles: ['admin'] },
+    { id: 'super-admin-sales-audit', label: 'Sales Intelligence / Audit', icon: Receipt, roles: ['admin'] },
     { id: 'super-admin-audit', label: 'Audit Log Desk', icon: FileText, roles: ['admin'] },
     { id: 'super-admin-secops', label: 'Security (SOC)', icon: ShieldAlert, roles: ['admin'] },
     { id: 'super-admin-revenue', label: 'Revenue Analytics', icon: TrendingUp, roles: ['admin'] },

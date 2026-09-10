@@ -601,7 +601,7 @@ export const SuperAdminSalesAudit: React.FC<SuperAdminSalesAuditProps> = ({ user
   // Categories list for dropdown
   const allCategories = useMemo(() => {
     const cats = new Set<string>();
-    Object.values(medicinesMap).forEach(m => {
+    (Object.values(medicinesMap) as Partial<InventoryProduct>[]).forEach(m => {
       if (m.category) cats.add(m.category);
     });
     return Array.from(cats);
@@ -965,9 +965,9 @@ export const SuperAdminSalesAudit: React.FC<SuperAdminSalesAuditProps> = ({ user
             className="w-full px-3 py-2 text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl outline-none focus:border-blue-500 dark:text-white"
           >
             <option value="all">All Pharmacies ({Object.keys(pharmaciesMap).length})</option>
-            {Object.values(pharmaciesMap).map(p => (
+            {(Object.values(pharmaciesMap) as UserProfile[]).map(p => (
               <option key={p.uid} value={p.uid}>
-                {p.pharmacyName || p.displayName || p.uid.substring(0, 8)}
+                {p.pharmacyName || p.displayName || (p.uid ? p.uid.substring(0, 8) : 'Pharmacy')}
               </option>
             ))}
           </select>
@@ -1709,9 +1709,9 @@ export const SuperAdminSalesAudit: React.FC<SuperAdminSalesAuditProps> = ({ user
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100 dark:divide-slate-800 text-slate-600 dark:text-slate-400">
-                    {Array.from(selectedProductDrilldown.pharmacyIds).map(pId => {
+                    {Array.from(selectedProductDrilldown.pharmacyIds).map((pId: string) => {
                       const pProfile = pharmaciesMap[pId];
-                      const pName = pProfile?.pharmacyName || pProfile?.displayName || `Pharmacy #${pId.substring(0, 6)}`;
+                      const pName = pProfile?.pharmacyName || pProfile?.displayName || `Pharmacy #${String(pId).substring(0, 6)}`;
                       
                       // Calculate specific pharmacy sales for this product
                       const pharSales = filteredSales.filter(s => s.pharmacyId === pId && s.items.some(i => i.name.toLowerCase().trim() === selectedProductDrilldown.name.toLowerCase().trim()));

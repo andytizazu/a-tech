@@ -77,8 +77,11 @@ import {
   ArrowUpRight,
   Download,
   ArrowUpDown,
-  Store
+  Store,
+  Receipt
 } from 'lucide-react';
+import { SuperAdminSalesAudit } from './SuperAdminSalesAudit';
+import { ProductDemandIntelligence } from './ProductDemandIntelligence';
 import { 
   ResponsiveContainer, 
   AreaChart, 
@@ -124,6 +127,8 @@ type SuperAdminTab =
   | 'secops' 
   | 'revenue' 
   | 'market-intelligence'
+  | 'sales-audit'
+  | 'product-demand'
   | 'health' 
   | 'support' 
   | 'communication' 
@@ -1744,6 +1749,8 @@ export const SuperAdminConsole = ({
     { id: 'audit', label: 'Audit Log Desk', icon: FileText },
     { id: 'secops', label: 'Security (SOC)', icon: ShieldAlert },
     { id: 'revenue', label: 'Revenue Analytics', icon: TrendingUp },
+    { id: 'sales-audit', label: 'Sales Intelligence / Audit', icon: Receipt },
+    { id: 'product-demand', label: 'Product Demand & Importer Intel', icon: Sparkles },
     { id: 'market-intelligence', label: 'Market & Product Intelligence', icon: BarChart3 },
     { id: 'health', label: 'System Vitals', icon: Activity },
     { id: 'communication', label: 'Broadcaster', icon: Megaphone },
@@ -3929,6 +3936,37 @@ export const SuperAdminConsole = ({
                       </div>
                     </div>
                   </div>
+                )}
+
+                {/* TAB: SALES INTELLIGENCE & OPERATIONAL AUDIT */}
+                {activeTab === 'sales-audit' && (
+                  <SuperAdminSalesAudit 
+                    user={{
+                      uid: auth.currentUser?.uid || 'super-admin-01',
+                      email: auth.currentUser?.email || 'superadmin@atech.et',
+                      role: 'admin',
+                      name: auth.currentUser?.displayName || 'Super Admin',
+                      displayName: auth.currentUser?.displayName || 'Super Administrator',
+                      verificationStatus: 'approved',
+                      createdAt: Date.now()
+                    } as UserProfile} 
+                  />
+                )}
+
+                {/* TAB: PRODUCT DEMAND & IMPORTER INTELLIGENCE */}
+                {activeTab === 'product-demand' && (
+                  <ProductDemandIntelligence 
+                    user={{
+                      uid: auth.currentUser?.uid || 'super-admin-01',
+                      email: auth.currentUser?.email || 'superadmin@atech.et',
+                      role: 'admin',
+                      name: auth.currentUser?.displayName || 'Super Admin',
+                      displayName: auth.currentUser?.displayName || 'Super Administrator',
+                      verificationStatus: 'approved',
+                      createdAt: Date.now()
+                    } as UserProfile} 
+                    mode="super-admin"
+                  />
                 )}
 
                 {/* TAB 10: ECOSYSTEM HEALTH */}

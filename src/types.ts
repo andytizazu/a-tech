@@ -521,3 +521,80 @@ export interface WholesaleCustomer {
   }>;
 }
 
+export type DemandGrowthStatus = 
+  | 'rapidly_increasing' 
+  | 'increasing' 
+  | 'stable' 
+  | 'declining' 
+  | 'very_low_demand' 
+  | 'no_recent_sales';
+
+export type ImportRecommendation = 
+  | 'import_increase' 
+  | 'monitor' 
+  | 'avoid_overstock';
+
+export interface ProductDemandMetric {
+  productId: string;
+  name: string;
+  genericName: string;
+  category: string;
+  formulation: string;
+  totalUnitsSold: number;
+  totalRevenue: number;
+  transactionsCount: number;
+  pharmacyCount: number;
+  avgPrice: number;
+  firstSaleTimestamp: number;
+  lastSaleTimestamp: number;
+  rxUnits: number;
+  otcUnits: number;
+  rxPercentage: number;
+  salesVelocity: number;
+  prevPeriodUnits: number;
+  growthPct: number | null;
+  growthStatus: DemandGrowthStatus;
+  growthStatusLabel: string;
+  demandScore: number;
+  demandScoreFactors: {
+    volumeScore: number;
+    growthScore: number;
+    adoptionScore: number;
+    frequencyScore: number;
+    recencyScore: number;
+  };
+  importRecommendation: ImportRecommendation;
+  importRecommendationLabel: string;
+  importReasoning: string;
+  pharmacyBreakdown?: Array<{
+    pharmacyId: string;
+    pharmacyName: string;
+    region?: string;
+    units: number;
+    revenue: number;
+    transactions: number;
+    lastSale: number;
+  }>;
+}
+
+export interface AggregatedMarketDemand {
+  id: string;
+  productId: string;
+  name: string;
+  genericName: string;
+  category: string;
+  formulation: string;
+  totalUnitsSold: number;
+  totalRevenue: number;
+  transactionsCount: number;
+  pharmaciesAdopting: number;
+  demandScore: number;
+  growthPct: number | null;
+  growthStatus: DemandGrowthStatus;
+  importRecommendation: ImportRecommendation;
+  rxUnits: number;
+  otcUnits: number;
+  lastSaleTimestamp: number;
+  updatedAt: number;
+}
+

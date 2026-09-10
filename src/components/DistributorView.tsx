@@ -51,6 +51,7 @@ import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, Legend, PieC
 import jsPDF from 'jspdf';
 import { WholesaleAdsPortal } from './WholesaleAdsPortal';
 import CustomerManagementView from './CustomerManagementView';
+import { ProductDemandIntelligence } from './ProductDemandIntelligence';
 import 'jspdf-autotable';
 
 interface DistributorViewProps {
@@ -60,7 +61,7 @@ interface DistributorViewProps {
 }
 
 export default function DistributorView({ user, activeTab = 'dashboard', setActiveTab }: DistributorViewProps) {
-  const activeSegment: 'dashboard' | 'inventory' | 'orders' | 'deliveries' | 'warehouses' | 'analytics' | 'directory' | 'reports' | 'promotions' | 'customer-management' = (
+  const activeSegment: 'dashboard' | 'inventory' | 'orders' | 'deliveries' | 'warehouses' | 'analytics' | 'directory' | 'reports' | 'promotions' | 'customer-management' | 'product-demand' = (
     activeTab === 'dashboard' ? 'dashboard' :
     activeTab === 'my-products' ? 'inventory' :
     activeTab === 'orders' ? 'orders' :
@@ -71,6 +72,7 @@ export default function DistributorView({ user, activeTab = 'dashboard', setActi
     activeTab === 'advertising' ? 'promotions' :
     activeTab === 'reports' ? 'reports' :
     activeTab === 'analytics' ? 'analytics' :
+    activeTab === 'product-demand' ? 'product-demand' :
     'dashboard'
   );
 
@@ -804,6 +806,18 @@ export default function DistributorView({ user, activeTab = 'dashboard', setActi
       title: "Wholesale Campaigns & Promotions",
       subtitle: "Run banner advertisements, sponsor products, and analyze direct conversions.",
       icon: <Tag size={24} />,
+      actions: null
+    },
+    analytics: {
+      title: "Wholesale Analytics & Performance",
+      subtitle: "Review shipping flow distributions, revenue trajectories, and aggregated medication movements.",
+      icon: <BarChart2 size={24} />,
+      actions: null
+    },
+    'product-demand': {
+      title: "Product Demand & Importer Intelligence",
+      subtitle: "Predictive pharmacy demand scoring, market velocity tracking, and automated import recommendations.",
+      icon: <Sparkles size={24} />,
       actions: null
     },
     reports: {
@@ -2036,6 +2050,13 @@ export default function DistributorView({ user, activeTab = 'dashboard', setActi
               {/* ==================================== */}
               {activeSegment === 'promotions' && (
                 <WholesaleAdsPortal user={user} />
+              )}
+
+              {/* ==================================== */}
+              {/* SEGMENT 10: PRODUCT DEMAND INTEL     */}
+              {/* ==================================== */}
+              {activeSegment === 'product-demand' && (
+                <ProductDemandIntelligence user={user} mode={user.role === 'importer' ? 'importer' : 'distributor'} />
               )}
             </motion.div>
           </AnimatePresence>
