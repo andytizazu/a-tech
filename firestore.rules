@@ -92,11 +92,12 @@ service cloud.firestore {
 
     // Private Pharmacy & Distributor Dispensing Inventory
     match /medicines/{id} {
-      allow read: if isTenantMember(resource.data.pharmacyId);
-      allow create: if isTenantMember(request.resource.data.pharmacyId);
-      allow update: if isTenantMember(resource.data.pharmacyId) && 
-        (!('pharmacyId' in request.resource.data) || request.resource.data.pharmacyId == resource.data.pharmacyId);
-      allow delete: if isTenantMember(resource.data.pharmacyId);
+      allow read: if isTenantMember(resource.data.pharmacyId) || 
+                     (isAuthenticated() && (getRole() == 'importer' || getRole() == 'distributor' || isAdmin()));
+      allow create: if isTenantMember(request.resource.data.pharmacyId) || isAdmin();
+      allow update: if (isTenantMember(resource.data.pharmacyId) && 
+        (!('pharmacyId' in request.resource.data) || request.resource.data.pharmacyId == resource.data.pharmacyId)) || isAdmin();
+      allow delete: if isTenantMember(resource.data.pharmacyId) || isAdmin();
     }
 
     // Pharmacy Branches
@@ -137,11 +138,12 @@ service cloud.firestore {
 
     // POS Sales & Financial Records
     match /sales/{id} {
-      allow read: if isTenantMember(resource.data.pharmacyId);
-      allow create: if isTenantMember(request.resource.data.pharmacyId);
-      allow update: if isTenantMember(resource.data.pharmacyId) && 
-        (!('pharmacyId' in request.resource.data) || request.resource.data.pharmacyId == resource.data.pharmacyId);
-      allow delete: if isTenantMember(resource.data.pharmacyId);
+      allow read: if isTenantMember(resource.data.pharmacyId) || 
+                     (isAuthenticated() && (getRole() == 'importer' || getRole() == 'distributor' || isAdmin()));
+      allow create: if isTenantMember(request.resource.data.pharmacyId) || isAdmin();
+      allow update: if (isTenantMember(resource.data.pharmacyId) && 
+        (!('pharmacyId' in request.resource.data) || request.resource.data.pharmacyId == resource.data.pharmacyId)) || isAdmin();
+      allow delete: if isTenantMember(resource.data.pharmacyId) || isAdmin();
     }
 
     // Marketplace Products (Public wholesale catalog listings from Importers & Distributors)

@@ -40,8 +40,14 @@ import {
   Truck,
   CreditCard,
   ChevronLeft,
-  ChevronRight
+  ChevronRight,
+  Globe,
+  MapPin,
+  Link2
 } from 'lucide-react';
+import { GeographicSalesIntelligence } from './GeographicSalesIntelligence';
+import { SupplyChainIntelligence } from './SupplyChainIntelligence';
+import { PurchaseOrder } from './PurchaseOrdersView';
 import { 
   ResponsiveContainer, 
   AreaChart, 
@@ -65,7 +71,7 @@ interface SuperAdminSalesAuditProps {
 }
 
 type DatePreset = 'today' | 'yesterday' | '7d' | '30d' | '90d' | 'this_month' | 'prev_month' | 'all' | 'custom';
-type ActiveAuditTab = 'products' | 'transactions' | 'pharmacies' | 'importers' | 'demand' | 'suppliers' | 'trends';
+type ActiveAuditTab = 'geo' | 'supply_chain' | 'products' | 'transactions' | 'pharmacies' | 'importers' | 'demand' | 'suppliers' | 'trends';
 
 interface ProductAggregate {
   productId: string;
@@ -124,7 +130,7 @@ export const SuperAdminSalesAudit: React.FC<SuperAdminSalesAuditProps> = ({ user
   }
 
   // State Management
-  const [activeTab, setActiveTab] = useState<ActiveAuditTab>('products');
+  const [activeTab, setActiveTab] = useState<ActiveAuditTab>('geo');
   const [datePreset, setDatePreset] = useState<DatePreset>('30d');
   const [customStartDate, setCustomStartDate] = useState('');
   const [customEndDate, setCustomEndDate] = useState('');
@@ -134,7 +140,10 @@ export const SuperAdminSalesAudit: React.FC<SuperAdminSalesAuditProps> = ({ user
   const [sales, setSales] = useState<Sale[]>([]);
   const [pharmaciesMap, setPharmaciesMap] = useState<Record<string, UserProfile>>({});
   const [medicinesMap, setMedicinesMap] = useState<Record<string, Partial<InventoryProduct>>>({});
+  const [rawMedicinesList, setRawMedicinesList] = useState<Partial<InventoryProduct>[]>([]);
   const [customersMap, setCustomersMap] = useState<Record<string, Partial<Customer & { chronicConditions?: string[]; allergies?: string[]; prescriptions?: any[] }>>>({});
+  const [wholesalersMap, setWholesalersMap] = useState<Record<string, UserProfile>>({});
+  const [purchaseOrdersList, setPurchaseOrdersList] = useState<PurchaseOrder[]>([]);
 
   // Filters
   const [searchQuery, setSearchQuery] = useState('');
@@ -173,41 +182,69 @@ export const SuperAdminSalesAudit: React.FC<SuperAdminSalesAuditProps> = ({ user
     }
   };
 
-  // Load Metadata (Pharmacies, Medicines, Customers)
-  useEffect(() => {
-    const fetchMetadata = async () => {
+  // Load Metadata (Pharmacies, Wholesalers, Purchase Orders, Medicines, Customers)
+  const fetchMetadata = async () => {
+    try {
+      // 1. Fetch Pharmacies
+      const usersSnap = await getDocs(query(collection(db, 'users'), where('role', '==', 'pharmacy'), limit(500)));
+      const pMap: Record<string, UserProfile> = {};
+      usersSnap.docs.forEach(d => {
+        pMap[d.id] = { uid: d.id, ...(d.data() as any) };
+      });
+      setPharmaciesMap(pMap);
+
+      // 1b. Fetch Wholesalers / Importers / Distributors
       try {
-        // 1. Fetch Pharmacies
-        const usersSnap = await getDocs(query(collection(db, 'users'), where('role', '==', 'pharmacy'), limit(500)));
-        const pMap: Record<string, UserProfile> = {};
-        usersSnap.docs.forEach(d => {
-          pMap[d.id] = { uid: d.id, ...(d.data() as any) };
+        const wsSnap = await getDocs(query(collection(db, 'users'), where('role', 'in', ['importer', 'distributor']), limit(200)));
+        const wMap: Record<string, UserProfile> = {};
+        wsSnap.docs.forEach(d => {
+          wMap[d.id] = { uid: d.id, ...(d.data() as any) };
         });
-        setPharmaciesMap(pMap);
-
-        // 2. Fetch Sample Medicines Catalog for Cost & Generic lookup
-        const medsSnap = await getDocs(query(collection(db, 'medicines'), limit(1500)));
-        const mMap: Record<string, Partial<InventoryProduct>> = {};
-        medsSnap.docs.forEach(d => {
-          const data = d.data() as InventoryProduct;
-          mMap[d.id] = data;
-          if (data.name) {
-            mMap[data.name.toLowerCase().trim()] = data;
-          }
-        });
-        setMedicinesMap(mMap);
-
-        // 3. Fetch Registered Customers for Rich Patient & Prescription context
-        const custSnap = await getDocs(query(collection(db, 'customers'), limit(1000)));
-        const cMap: Record<string, any> = {};
-        custSnap.docs.forEach(d => {
-          cMap[d.id] = { id: d.id, ...d.data() };
-        });
-        setCustomersMap(cMap);
-      } catch (err) {
-        console.error('Failed to load audit metadata:', err);
+        setWholesalersMap(wMap);
+      } catch (e) {
+        console.warn('Wholesalers fetch handled:', e);
       }
-    };
+
+      // 1c. Fetch Purchase Orders for cross-pharmacy supplier and cost audit
+      try {
+        const poSnap = await getDocs(query(collection(db, 'purchase_orders'), limit(1500)));
+        const poList: PurchaseOrder[] = [];
+        poSnap.docs.forEach(d => {
+          poList.push({ id: d.id, ...(d.data() as any) });
+        });
+        setPurchaseOrdersList(poList);
+      } catch (e) {
+        console.warn('Purchase orders fetch handled:', e);
+      }
+
+      // 2. Fetch Sample Medicines Catalog for Cost & Generic lookup
+      const medsSnap = await getDocs(query(collection(db, 'medicines'), limit(1500)));
+      const mMap: Record<string, Partial<InventoryProduct>> = {};
+      const mList: Partial<InventoryProduct>[] = [];
+      medsSnap.docs.forEach(d => {
+        const data = { id: d.id, ...(d.data() as any) };
+        mList.push(data);
+        mMap[d.id] = data;
+        if (data.name) {
+          mMap[data.name.toLowerCase().trim()] = data;
+        }
+      });
+      setMedicinesMap(mMap);
+      setRawMedicinesList(mList);
+
+      // 3. Fetch Registered Customers for Rich Patient & Prescription context
+      const custSnap = await getDocs(query(collection(db, 'customers'), limit(1000)));
+      const cMap: Record<string, any> = {};
+      custSnap.docs.forEach(d => {
+        cMap[d.id] = { id: d.id, ...d.data() };
+      });
+      setCustomersMap(cMap);
+    } catch (err) {
+      console.error('Failed to load audit metadata:', err);
+    }
+  };
+
+  useEffect(() => {
     fetchMetadata();
   }, []);
 
@@ -1028,6 +1065,8 @@ export const SuperAdminSalesAudit: React.FC<SuperAdminSalesAuditProps> = ({ user
       {/* Main Tab Navigation */}
       <div className="flex items-center gap-2 border-b border-slate-200 dark:border-slate-800 overflow-x-auto pb-2">
         {[
+          { id: 'geo', label: 'Geographic Intelligence', icon: Globe },
+          { id: 'supply_chain', label: 'Supply Chain & Profit Intelligence', icon: Link2, count: purchaseOrdersList.length },
           { id: 'products', label: 'Product Sales Board', icon: Package, count: productAggregates.length },
           { id: 'transactions', label: 'Individual Transactions', icon: Receipt, count: filteredSales.length },
           { id: 'pharmacies', label: 'Pharmacy Revenue Ledger', icon: Building2, count: pharmacyAggregates.length },
@@ -1057,6 +1096,40 @@ export const SuperAdminSalesAudit: React.FC<SuperAdminSalesAuditProps> = ({ user
           </button>
         ))}
       </div>
+
+      {/* TAB CONTENT: 0. Geographic Sales & Product Intelligence */}
+      {activeTab === 'geo' && (
+        <GeographicSalesIntelligence
+          sales={filteredSales}
+          pharmaciesMap={pharmaciesMap}
+          medicinesMap={medicinesMap}
+          rawMedicinesList={rawMedicinesList}
+          loading={loading}
+          onRefresh={() => {
+            fetchSalesData();
+            fetchMetadata();
+          }}
+          currentUser={user}
+        />
+      )}
+
+      {/* TAB CONTENT: 0b. Supply Chain & Profit Intelligence */}
+      {activeTab === 'supply_chain' && (
+        <SupplyChainIntelligence
+          sales={filteredSales}
+          pharmaciesMap={pharmaciesMap}
+          medicinesMap={medicinesMap}
+          rawMedicinesList={rawMedicinesList}
+          wholesalersMap={wholesalersMap}
+          purchaseOrders={purchaseOrdersList}
+          loading={loading}
+          onRefresh={() => {
+            fetchSalesData();
+            fetchMetadata();
+          }}
+          currentUser={user}
+        />
+      )}
 
       {/* TAB CONTENT: 1. Product Sales Board */}
       {activeTab === 'products' && (
@@ -1522,11 +1595,20 @@ export const SuperAdminSalesAudit: React.FC<SuperAdminSalesAuditProps> = ({ user
       {/* TAB CONTENT: 6. Supplier & Cost Intelligence */}
       {activeTab === 'suppliers' && (
         <div className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-sm p-6 space-y-4">
-          <div className="border-b border-slate-100 dark:border-slate-800 pb-4">
-            <h2 className="text-base font-bold text-slate-900 dark:text-white">Supplier Sourcing & Purchasing Cost Audit</h2>
-            <p className="text-xs text-slate-500">
-              Verified supplier pricing and profit margins. Where supplier cost is not logged on historical sales, it is explicitly indicated.
-            </p>
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 border-b border-slate-100 dark:border-slate-800 pb-4">
+            <div>
+              <h2 className="text-base font-bold text-slate-900 dark:text-white">Supplier Sourcing & Purchasing Cost Audit</h2>
+              <p className="text-xs text-slate-500">
+                Verified supplier pricing and profit margins. Where supplier cost is not logged on historical sales, it is explicitly indicated.
+              </p>
+            </div>
+            <button
+              onClick={() => setActiveTab('supply_chain')}
+              className="inline-flex items-center gap-2 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold rounded-xl transition-all shadow-sm"
+            >
+              <Link2 className="w-3.5 h-3.5" />
+              <span>Launch Supply Chain & Profit Matrix</span>
+            </button>
           </div>
 
           <div className="overflow-x-auto">
@@ -1662,6 +1744,15 @@ export const SuperAdminSalesAudit: React.FC<SuperAdminSalesAuditProps> = ({ user
                 <div>
                   <h3 className="text-lg font-black text-slate-900 dark:text-white">{selectedProductDrilldown.name}</h3>
                   <p className="text-xs text-slate-400 font-mono">Generic: {selectedProductDrilldown.genericName} | Category: {selectedProductDrilldown.category}</p>
+                  <p className="text-xs font-semibold text-blue-600 dark:text-blue-400 mt-0.5 flex items-center gap-1">
+                    <Building2 className="w-3.5 h-3.5 text-slate-400" />
+                    <span>Wholesale Supplier: </span>
+                    <strong className="text-slate-800 dark:text-slate-200">
+                      {medicinesMap[selectedProductDrilldown.id]?.supplier || 
+                       rawMedicinesList.find(m => m.name?.toLowerCase().trim() === selectedProductDrilldown.name.toLowerCase().trim())?.supplier || 
+                       'SUPPLIER INFORMATION NOT AVAILABLE'}
+                    </strong>
+                  </p>
                 </div>
               </div>
               <button
@@ -1831,6 +1922,7 @@ export const SuperAdminSalesAudit: React.FC<SuperAdminSalesAuditProps> = ({ user
                   <thead className="bg-slate-50 dark:bg-slate-800 text-slate-700 dark:text-slate-300 font-bold uppercase text-[10px]">
                     <tr>
                       <th className="py-2.5 px-3">Product Name</th>
+                      <th className="py-2.5 px-3">Wholesale Supplier</th>
                       <th className="py-2.5 px-3">Batch / Expiry</th>
                       <th className="py-2.5 px-3">Quantity</th>
                       <th className="py-2.5 px-3">Unit Price</th>
@@ -1840,19 +1932,23 @@ export const SuperAdminSalesAudit: React.FC<SuperAdminSalesAuditProps> = ({ user
                   </thead>
                   <tbody className="divide-y divide-slate-100 dark:divide-slate-800 text-slate-600 dark:text-slate-400">
                     {selectedSaleDetail.items.map((it, idx) => {
-                      const m = medicinesMap[it.productId] || medicinesMap[it.name.toLowerCase().trim()];
+                      const m = medicinesMap[it.productId] || medicinesMap[it.name.toLowerCase().trim()] || rawMedicinesList.find(rm => rm.name?.toLowerCase().trim() === it.name.toLowerCase().trim());
                       const cost = (it as any).costPrice !== undefined ? Number((it as any).costPrice) : (m?.costPrice !== undefined ? Number(m.costPrice) : null);
+                      const supplier = (it as any).supplier || m?.supplier || 'SUPPLIER INFORMATION NOT AVAILABLE';
 
                       return (
                         <tr key={idx}>
                           <td className="py-2.5 px-3 font-bold text-slate-900 dark:text-white">{it.name}</td>
+                          <td className="py-2.5 px-3 text-blue-600 dark:text-blue-400 font-medium text-[11px]">
+                            {supplier !== 'SUPPLIER INFORMATION NOT AVAILABLE' ? supplier : <span className="text-slate-400 text-[10px]">SUPPLIER INFORMATION NOT AVAILABLE</span>}
+                          </td>
                           <td className="py-2.5 px-3 text-slate-400 font-mono text-[11px]">
                             {m?.batchNumber || (it as any).batchNumber || 'N/A'} (Exp: {m?.expiryDate || 'N/A'})
                           </td>
                           <td className="py-2.5 px-3 font-bold font-mono">{it.quantity}</td>
                           <td className="py-2.5 px-3 font-mono">{Number(it.price).toFixed(2)} ETB</td>
                           <td className="py-2.5 px-3 font-mono text-slate-500">
-                            {cost !== null ? `${cost.toFixed(2)} ETB` : <span className="italic text-slate-400">Unavailable</span>}
+                            {cost !== null ? `${cost.toFixed(2)} ETB` : <span className="text-[10px] font-mono text-amber-600 dark:text-amber-400 font-semibold">COST DATA INCOMPLETE</span>}
                           </td>
                           <td className="py-2.5 px-3 font-mono font-black text-slate-900 dark:text-white text-right">
                             {(Number(it.quantity) * Number(it.price)).toFixed(2)} ETB
@@ -1920,6 +2016,67 @@ export const SuperAdminSalesAudit: React.FC<SuperAdminSalesAuditProps> = ({ user
               <div className="p-3 bg-slate-50 dark:bg-slate-800 rounded-xl">
                 <span className="text-[10px] font-bold text-slate-400 uppercase">Rx Sales Count</span>
                 <p className="text-base font-black text-purple-600">{selectedPharmacyAudit.prescriptionSalesCount}</p>
+              </div>
+            </div>
+
+            {/* Pharmacy Ranked Products Table (Best to Worst) */}
+            <div>
+              <h4 className="text-sm font-bold text-slate-900 dark:text-white mb-2 flex items-center justify-between">
+                <span>Pharmacy Product Dispensing Breakdown (Best to Worst Selling)</span>
+                <span className="text-[11px] font-normal text-slate-400">Aggregated from verified POS records</span>
+              </h4>
+              <div className="border border-slate-100 dark:border-slate-800 rounded-2xl overflow-hidden mb-4">
+                <table className="w-full text-left text-xs">
+                  <thead className="bg-slate-50 dark:bg-slate-800 text-slate-700 dark:text-slate-300 font-bold uppercase text-[10px]">
+                    <tr>
+                      <th className="py-2.5 px-3">Rank</th>
+                      <th className="py-2.5 px-3">Product Name</th>
+                      <th className="py-2.5 px-3">Wholesale Supplier</th>
+                      <th className="py-2.5 px-3 text-right">Units Sold</th>
+                      <th className="py-2.5 px-3 text-right">Revenue</th>
+                      <th className="py-2.5 px-3 text-right">Avg Price</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100 dark:divide-slate-800 text-slate-600 dark:text-slate-400">
+                    {(() => {
+                      const pSales = filteredSales.filter(s => s.pharmacyId === selectedPharmacyAudit.pharmacyId);
+                      const pMap = new Map<string, { name: string; units: number; revenue: number; supplier: string }>();
+                      pSales.forEach(s => {
+                        s.items.forEach(it => {
+                          const key = it.name.toLowerCase().trim();
+                          const medMeta = medicinesMap[it.productId] || medicinesMap[key] || rawMedicinesList.find(m => m.name?.toLowerCase().trim() === key);
+                          const supplier = (it as any).supplier || medMeta?.supplier || 'SUPPLIER INFORMATION NOT AVAILABLE';
+                          if (!pMap.has(key)) {
+                            pMap.set(key, { name: it.name, units: 0, revenue: 0, supplier });
+                          }
+                          const e = pMap.get(key)!;
+                          e.units += Number(it.quantity) || 0;
+                          e.revenue += (Number(it.quantity) || 0) * (Number(it.price) || 0);
+                        });
+                      });
+                      const ranked = Array.from(pMap.values()).sort((a, b) => b.units - a.units);
+                      if (ranked.length === 0) {
+                        return (
+                          <tr>
+                            <td colSpan={6} className="py-4 text-center text-slate-400">No product sales logged in this period</td>
+                          </tr>
+                        );
+                      }
+                      return ranked.map((pr, idx) => (
+                        <tr key={pr.name} className="hover:bg-slate-50 dark:hover:bg-slate-800/40">
+                          <td className="py-2.5 px-3 font-bold text-slate-400">#{idx + 1}</td>
+                          <td className="py-2.5 px-3 font-bold text-slate-900 dark:text-white">{pr.name}</td>
+                          <td className="py-2.5 px-3 text-blue-600 dark:text-blue-400 font-medium">
+                            {pr.supplier !== 'SUPPLIER INFORMATION NOT AVAILABLE' ? pr.supplier : <span className="text-slate-400 text-[10px]">SUPPLIER INFORMATION NOT AVAILABLE</span>}
+                          </td>
+                          <td className="py-2.5 px-3 font-mono font-bold text-slate-900 dark:text-white text-right">{pr.units}</td>
+                          <td className="py-2.5 px-3 font-mono font-bold text-emerald-600 text-right">{pr.revenue.toLocaleString()} ETB</td>
+                          <td className="py-2.5 px-3 font-mono text-slate-500 text-right">{(pr.units > 0 ? pr.revenue / pr.units : 0).toFixed(2)} ETB</td>
+                        </tr>
+                      ));
+                    })()}
+                  </tbody>
+                </table>
               </div>
             </div>
 

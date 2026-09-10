@@ -6357,6 +6357,7 @@ const Sidebar = ({
     { id: 'customers', label: (role === 'importer' || role === 'distributor') ? 'Customers' : t('customers'), icon: Users, roles: ['pharmacy', 'staff'] },
     { id: 'suppliers', label: 'Wholesales', icon: Building2, roles: ['pharmacy', 'staff'] },
     { id: 'analytics', label: 'Analytics Insights', icon: TrendingUp, roles: ['importer', 'distributor'] },
+    { id: 'product-demand', label: 'Demand & Importer Intel', icon: Sparkles, roles: ['importer', 'distributor'] },
     { id: 'marketplace', label: t('marketplace'), icon: Truck, roles: ['pharmacy', 'admin', 'staff'], minPlan: 'standard' },
     { id: 'orders', label: (role === 'importer' || role === 'distributor') ? 'Orders' : t('orders'), icon: ShoppingCart, roles: ['pharmacy', 'importer', 'distributor', 'staff'], minPlan: 'standard' },
     { id: 'customer-management', label: 'Customer Management', icon: Users, roles: ['importer', 'distributor'] },
@@ -6376,6 +6377,7 @@ const Sidebar = ({
     { id: 'super-admin-marketplace', label: 'Marketplace Admin', icon: Truck, roles: ['admin'] },
     { id: 'super-admin-pharmacy-wholesales', label: 'Pharmacy Whole Sales', icon: Building2, roles: ['admin'] },
     { id: 'super-admin-sales-audit', label: 'Sales Intelligence / Audit', icon: Receipt, roles: ['admin'] },
+    { id: 'super-admin-product-demand', label: 'Product Demand & Importer Intel', icon: Sparkles, roles: ['admin'] },
     { id: 'super-admin-audit', label: 'Audit Log Desk', icon: FileText, roles: ['admin'] },
     { id: 'super-admin-secops', label: 'Security (SOC)', icon: ShieldAlert, roles: ['admin'] },
     { id: 'super-admin-revenue', label: 'Revenue Analytics', icon: TrendingUp, roles: ['admin'] },
@@ -12292,6 +12294,7 @@ export default function App() {
       customers: ['pharmacy', 'staff'],
       suppliers: ['pharmacy', 'staff'],
       analytics: ['importer', 'distributor'],
+      'product-demand': ['importer', 'distributor'],
       marketplace: ['pharmacy', 'admin', 'staff'],
       orders: ['pharmacy', 'importer', 'distributor', 'staff'],
       procurement: ['pharmacy', 'staff'],
@@ -12928,6 +12931,8 @@ export default function App() {
       { id: 'deliveries', label: 'Delivery & Shipping', roles: ['importer', 'distributor'] },
       { id: 'reports', label: 'Reports', roles: ['importer', 'distributor'] },
       { id: 'analytics', label: 'Analytics Insights', roles: ['importer', 'distributor'] },
+      { id: 'product-demand', label: 'Demand & Importer Intel', roles: ['importer', 'distributor', 'admin'] },
+      { id: 'super-admin-product-demand', label: 'Product Demand & Importer Intel', roles: ['admin'] },
       { id: 'super-admin', label: 'Ecosystem Control Tower', roles: ['admin'] },
       { id: 'admin-users', label: 'User Management', roles: ['admin'] },
       { id: 'admin-marketing', label: 'Marketing Team', roles: ['admin'] },
@@ -12947,10 +12952,10 @@ export default function App() {
     // Role-specific allowed list for extra safety
     const accessMap: Record<string, string[]> = {
       pharmacy: ['dashboard', 'inventory', 'bincard', 'expiry', 'forecasting', 'sales', 'customers', 'marketplace', 'orders', 'procurement', 'suppliers', 'staff', 'branches', 'warehouses', 'subscription', 'settings'],
-      importer: ['dashboard', 'my-products', 'orders', 'customer-management', 'warehouses', 'deliveries', 'advertising', 'reports', 'analytics', 'staff', 'subscription', 'notifications', 'settings'],
+      importer: ['dashboard', 'my-products', 'orders', 'customer-management', 'warehouses', 'deliveries', 'advertising', 'reports', 'analytics', 'product-demand', 'staff', 'subscription', 'notifications', 'settings'],
       regional_manager: ['dashboard', 'settings'],
       marketing: ['dashboard', 'marketing-stats', 'settings'],
-      distributor: ['dashboard', 'my-products', 'orders', 'customer-management', 'warehouses', 'deliveries', 'advertising', 'reports', 'analytics', 'staff', 'subscription', 'notifications', 'settings'],
+      distributor: ['dashboard', 'my-products', 'orders', 'customer-management', 'warehouses', 'deliveries', 'advertising', 'reports', 'analytics', 'product-demand', 'staff', 'subscription', 'notifications', 'settings'],
     };
 
     // Staff access
@@ -13359,7 +13364,7 @@ export default function App() {
                 <>
                   {(profile.role === 'importer' || profile.role === 'distributor') ? (
                     <>
-                      {['dashboard', 'my-products', 'orders', 'customer-management', 'warehouses', 'deliveries', 'advertising', 'reports', 'analytics'].includes(activeTab) && (
+                      {['dashboard', 'my-products', 'orders', 'customer-management', 'warehouses', 'deliveries', 'advertising', 'reports', 'analytics', 'product-demand'].includes(activeTab) && (
                         <DistributorView user={profile} activeTab={activeTab} setActiveTab={setActiveTab} />
                       )}
                       {activeTab === 'subscription' && <SubscriptionView user={profile} settings={systemSettings} language={language} />}
