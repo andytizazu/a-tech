@@ -52,6 +52,7 @@ import jsPDF from 'jspdf';
 import { WholesaleAdsPortal } from './WholesaleAdsPortal';
 import CustomerManagementView from './CustomerManagementView';
 import { ProductDemandIntelligence } from './ProductDemandIntelligence';
+import { UnitSelectorFields } from './UnitSelectorFields';
 import 'jspdf-autotable';
 
 interface DistributorViewProps {
@@ -2135,9 +2136,9 @@ export default function DistributorView({ user, activeTab = 'dashboard', setActi
       {/* 2. REGISTER MEDICINE MODAL */}
       {showAddProdModal && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="bg-white dark:bg-slate-900 rounded-3xl p-6 max-w-md w-full border border-slate-200 dark:border-slate-800 shadow-xl space-y-4">
+          <div className="bg-white dark:bg-slate-900 rounded-3xl p-6 max-w-xl w-full max-h-[92vh] overflow-y-auto border border-slate-200 dark:border-slate-800 shadow-2xl space-y-4">
             <h3 className="font-bold text-slate-900 dark:text-white text-md">Intake Direct Medicine to Warehouses</h3>
-            <form onSubmit={handleAddProduct} className="space-y-3">
+            <form onSubmit={handleAddProduct} className="space-y-4">
               <div className="grid grid-cols-2 gap-2">
                 <div className="space-y-1">
                   <label className="text-xs font-bold text-slate-500">Medicine Name</label>
@@ -2215,9 +2216,36 @@ export default function DistributorView({ user, activeTab = 'dashboard', setActi
                 </div>
               </div>
 
+              {/* Purchase Unit, Relatable Dispensing Unit Menu & Conversion Factor */}
+              <UnitSelectorFields
+                compact={true}
+                purchaseUnit={prodForm.purchaseUnit || 'Box'}
+                dispensingUnit={prodForm.dispensingUnit || 'Tablet'}
+                conversionFactor={prodForm.conversionFactor || 100}
+                quantity={prodForm.quantity || 0}
+                showQuantitySection={true}
+                onChange={({ purchaseUnit, dispensingUnit, conversionFactor, quantity }) => {
+                  setProdForm(prev => ({
+                    ...prev,
+                    purchaseUnit,
+                    dispensingUnit,
+                    conversionFactor,
+                    ...(quantity !== undefined ? { quantity } : {})
+                  }));
+                }}
+                onQuantityChange={newQty => {
+                  setProdForm(prev => ({ ...prev, quantity: newQty }));
+                }}
+              />
+
               <div className="grid grid-cols-2 gap-2">
                 <div className="space-y-1">
-                  <label className="text-xs font-bold text-slate-500">Stock Qty (Boxes)</label>
+                  <label className="text-xs font-bold text-slate-500 flex justify-between">
+                    <span>Stock ({prodForm.purchaseUnit || 'Box'}es)</span>
+                    <span className="text-[10px] text-emerald-600 font-bold">
+                      = {((prodForm.quantity || 0) * (prodForm.conversionFactor || 1)).toLocaleString()} {prodForm.dispensingUnit || 'Tablet'}s
+                    </span>
+                  </label>
                   <input 
                     type="number" 
                     placeholder="250"
@@ -2305,7 +2333,7 @@ export default function DistributorView({ user, activeTab = 'dashboard', setActi
                   Cancel
                 </button>
                 <button type="submit" className="px-4 py-1.5 bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs rounded-lg transition">
-                  Save Intake Box
+                  Save Intake ({prodForm.purchaseUnit || 'Box'})
                 </button>
               </div>
             </form>

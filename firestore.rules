@@ -54,6 +54,17 @@ service cloud.firestore {
       );
     }
 
+    // Connection health-check verification
+    match /test/{id} {
+      allow read: if true;
+    }
+
+    // Public Staff Login Resolution Directory (no sensitive data, only auth email lookup)
+    match /staff_lookup/{lookupKey} {
+      allow read: if true;
+      allow write: if isAuthenticated();
+    }
+
     // Collection rules
     match /users/{uid} {
       allow read: if isAuthenticated();

@@ -7,7 +7,6 @@ import {
   addDoc 
 } from 'firebase/firestore';
 import { db, auth } from '../firebase';
-import AIEpidemiologicalAlertPanel from './AIEpidemiologicalAlertPanel';
 import { 
   UserProfile, 
   InventoryProduct, 
@@ -538,9 +537,6 @@ export default function ForecastingView({ user, branches = [], warehouses = [] }
           </div>
         </div>
       </div>
-
-      {/* Live Gemini Country Epidemic & Disease Outbreak Forecaster */}
-      <AIEpidemiologicalAlertPanel user={user} />
 
       {/* Forecasting Dynamic Engine Configurations Card */}
       <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-6 shadow-sm">

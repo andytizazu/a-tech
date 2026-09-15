@@ -4,14 +4,6 @@
  */
 
 import React, { useState, useEffect, Component } from 'react';
-import { APIProvider, Map, AdvancedMarker, Pin } from '@vis.gl/react-google-maps';
-
-const GOOGLE_MAPS_API_KEY =
-  process.env.GOOGLE_MAPS_PLATFORM_KEY ||
-  (import.meta as any).env?.VITE_GOOGLE_MAPS_PLATFORM_KEY ||
-  (globalThis as any).GOOGLE_MAPS_PLATFORM_KEY ||
-  '';
-const hasValidGoogleMapsKey = Boolean(GOOGLE_MAPS_API_KEY) && GOOGLE_MAPS_API_KEY !== 'YOUR_API_KEY';
 import { 
   auth, db 
 } from './firebase';
@@ -41,7 +33,6 @@ import {
   writeBatch,
   runTransaction,
   getDocs,
-  getDocFromServer,
   orderBy,
   limit,
   startAfter,
@@ -79,6 +70,7 @@ import {
   ShieldCheck,
   Mail,
   Lock,
+  KeyRound,
   User,
   X,
   ExternalLink,
@@ -133,25 +125,6 @@ export const recordBinCardMovement = async (db: any, entry: any) => {
   }
 };
 
-const GoogleMapsPlaceholder = ({ message }: { message: string }) => (
-  <div className="w-full h-80 min-h-[300px] bg-slate-50 dark:bg-slate-800/10 border border-slate-200 dark:border-slate-800 rounded-3xl flex flex-col items-center justify-center p-6 text-center">
-    <div className="w-12 h-12 bg-blue-50 dark:bg-blue-950/30 text-blue-600 dark:text-blue-400 rounded-2xl flex items-center justify-center mb-4">
-      <Globe size={24} />
-    </div>
-    <h4 className="font-bold text-slate-800 dark:text-slate-200 mb-1 text-sm font-sans">Google Maps Required</h4>
-    <p className="text-xs text-slate-500 dark:text-slate-400 max-w-sm mb-4 leading-relaxed font-sans">
-      {message}
-    </p>
-    <div className="bg-white dark:bg-slate-900 border border-slate-100 dark:border-slate-800 p-4 rounded-xl text-left text-[11px] text-slate-600 dark:text-slate-400 max-w-sm w-full shadow-xs">
-      <p className="font-bold text-slate-700 dark:text-slate-300 mb-1 font-sans">How to configure:</p>
-      <ol className="list-decimal list-inside space-y-1 text-[11px] leading-tight font-sans">
-        <li>Get a key from the Google Cloud Console.</li>
-        <li>In AI Studio (top right), click <strong>Settings</strong> (⚙️) &rarr; <strong>Secrets</strong>.</li>
-        <li>Add <code>GOOGLE_MAPS_PLATFORM_KEY</code> as name and paste your key.</li>
-      </ol>
-    </div>
-  </div>
-);
 import { motion, AnimatePresence } from 'motion/react';
 import { Toaster, toast } from 'react-hot-toast';
 import { format } from 'date-fns';
@@ -174,10 +147,13 @@ import DistributorView from './components/DistributorView';
 import NationalAvailabilitySearchView from './components/NationalAvailabilitySearchView';
 import { SuperAdminConsole } from './components/SuperAdminConsole';
 import NotificationsView from './components/NotificationsView';
+import { ChangePasswordCard } from './components/ChangePasswordCard';
+import { MustChangePasswordModal } from './components/MustChangePasswordModal';
 import { syncPharmacyBillingAndInvoices, getSubscriptionCost } from './lib/billingEngine';
 import { hasFeature, getUpgradeRequirementLabel } from './lib/featureGate';
 import { SubscriptionView } from './components/SubscriptionView';
 import BinCardLedgerView from './components/BinCardLedgerView';
+import { UnitSelectorFields } from './components/UnitSelectorFields';
 import { 
   UserProfile, 
   InventoryProduct, 
@@ -544,7 +520,7 @@ const ConnectionTroubleshooter = () => {
 
       logs.push("Testing Firestore reachability...");
       // Wrap in a promise with timeout
-      const testPromise = getDocFromServer(doc(db, 'test', 'connection'));
+      const testPromise = getDoc(doc(db, 'test', 'connection'));
       const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error("Connection timed out")), 5000));
       
       await Promise.race([testPromise, timeoutPromise]).catch(err => {
@@ -654,6 +630,7 @@ const Login = ({ onLoginSuccess }: { onLoginSuccess: (user: any) => void }) => {
   const [showPrivacyModal, setShowPrivacyModal] = useState(false);
   const [agreedToTerms, setAgreedToTerms] = useState(false);
   const [popupBlockedError, setPopupBlockedError] = useState(false);
+  const [authCredentialError, setAuthCredentialError] = useState<{ email: string; message: string } | null>(null);
 
   // Marketing Agent Invitation States
   const [marketingInvite, setMarketingInvite] = useState<any | null>(null);
@@ -689,13 +666,7 @@ const Login = ({ onLoginSuccess }: { onLoginSuccess: (user: any) => void }) => {
       setInviteLoading(true);
       const fetchInvite = async () => {
         try {
-          let docSnap;
-          try {
-            docSnap = await getDocFromServer(doc(db, 'marketing_invites', inviteId));
-          } catch (serverErr) {
-            console.warn("getDocFromServer failed, falling back to standard getDoc", serverErr);
-            docSnap = await getDoc(doc(db, 'marketing_invites', inviteId));
-          }
+          const docSnap = await getDoc(doc(db, 'marketing_invites', inviteId));
           if (docSnap.exists()) {
             const data = docSnap.data();
             if (data.used) {
@@ -798,12 +769,26 @@ const Login = ({ onLoginSuccess }: { onLoginSuccess: (user: any) => void }) => {
   };
 
   const handleStaffAuth = async (u?: string, p?: string, ph?: string) => {
-    const inputUsername = u || username;
-    const inputPassword = p || password;
-    const inputPharmacy = ph || pharmacyName;
+    let inputUsername = (u !== undefined ? u : username).trim();
+    let inputPassword = p !== undefined ? p : password;
+    let inputPharmacy = (ph !== undefined ? ph : pharmacyName).trim();
 
-    if (!inputUsername || !inputPassword || !inputPharmacy) {
-      toast.error('Please fill in all fields');
+    // Auto-extract pharmacy if user typed username@pharmacy
+    if (!inputPharmacy && inputUsername.includes('@') && !inputUsername.endsWith('@staff.atech.com')) {
+      const parts = inputUsername.split('@');
+      inputUsername = parts[0].trim();
+      inputPharmacy = parts[1].trim();
+      setPharmacyName(inputPharmacy);
+      setUsername(inputUsername);
+    }
+
+    if (!inputUsername || !inputPassword) {
+      toast.error('Please enter your Username and Password');
+      return;
+    }
+
+    if (!inputPharmacy && !inputUsername.endsWith('@staff.atech.com')) {
+      toast.error('Please enter the Pharmacy Name');
       return;
     }
 
@@ -831,31 +816,61 @@ const Login = ({ onLoginSuccess }: { onLoginSuccess: (user: any) => void }) => {
         if (namePart.includes('@')) {
           const parts = namePart.split('@');
           namePart = parts[0].trim();
-          // If they typed name@Pharmacy Name, the @ part overrides the pharmacy field
           pharmacySlug = slugify(parts[1]);
         }
         
         const nameSlug = slugify(namePart, '.');
         email = `${nameSlug}.${pharmacySlug}@staff.atech.com`;
+
+        // Check staff_lookup directory for any reset or alias credentials
+        try {
+          const candidateKeys = [
+            trimmedUsername,
+            slugify(trimmedUsername),
+            `${pharmacySlug}_${nameSlug}`,
+            `${pharmacySlug}_${slugify(namePart)}`,
+            `${pharmacySlug}_${slugify(trimmedUsername)}`,
+            slugify(namePart)
+          ];
+
+          for (const key of candidateKeys) {
+            if (!key) continue;
+            try {
+              const snap = await getDoc(doc(db, 'staff_lookup', key));
+              if (snap.exists() && snap.data()?.email) {
+                email = snap.data().email;
+                break;
+              }
+            } catch {
+              // Ignore single lookup key errors
+            }
+          }
+        } catch (lookupErr) {
+          console.warn('[Staff Auth] Lookup fallback to computed email:', lookupErr);
+        }
       }
       
-      console.log('[Staff Auth Debug]', { 
-        inputUsername, 
-        inputPharmacy, 
-        generatedEmail: email 
-      });
-      
       const cleanedEmail = email.trim().toLowerCase();
-      const result = await signInWithEmailAndPassword(auth, cleanedEmail, inputPassword);
+      let result;
+      try {
+        result = await signInWithEmailAndPassword(auth, cleanedEmail, inputPassword);
+      } catch (firstErr: any) {
+        // Auto-retry with trimmed password if user had accidental copy-paste whitespace
+        if (firstErr.code === 'auth/invalid-credential' && inputPassword !== inputPassword.trim()) {
+          result = await signInWithEmailAndPassword(auth, cleanedEmail, inputPassword.trim());
+        } else {
+          throw firstErr;
+        }
+      }
       const user = result.user;
       
       toast.success('Welcome back!', { id: authToast });
       onLoginSuccess(user);
     } catch (error: any) {
-      console.error(error);
+      console.warn('[Staff Auth Notice]', error?.code || error?.message || error);
       let message = 'Staff login failed';
       if (error.code === 'auth/invalid-credential' || error.code === 'auth/user-not-found' || error.code === 'auth/wrong-password') {
-        message = 'Invalid credentials. Please double-check your Pharmacy Name, Username, and Password. The Pharmacy Name must match what was used during registration.';
+        message = 'Invalid credentials. Please double-check your Pharmacy Name, Username, and Password. If your password was recently reset, ensure you use the exact temporary password provided by your manager.';
       } else if (error.code === 'auth/invalid-email') {
         message = 'The generated staff email is invalid. Please contact support.';
       } else if (error.code === 'auth/network-request-failed') {
@@ -927,7 +942,7 @@ const Login = ({ onLoginSuccess }: { onLoginSuccess: (user: any) => void }) => {
       await sendPasswordResetEmail(auth, cleanedEmail);
       toast.success('Password reset email sent! Check your inbox.', { id: resetToast });
     } catch (error: any) {
-      console.error(error);
+      console.warn('Password reset notice:', error?.message || error);
       toast.error('Failed to send reset email. Please check the email address.', { id: resetToast });
     }
   };
@@ -942,18 +957,27 @@ const Login = ({ onLoginSuccess }: { onLoginSuccess: (user: any) => void }) => {
       toast.error('Password must be at least 6 characters long');
       return;
     }
+
+    const cleanedEmail = email.replace(/[^a-zA-Z0-9@._%+-]/g, '').toLowerCase().trim();
+
+    // Auto-detect staff username entered in Business login form
+    if (!isSignUp && (cleanedEmail.endsWith('@staff.atech.com') || (cleanedEmail.includes('@') && !cleanedEmail.split('@')[1].includes('.')))) {
+      setIsStaffLogin(true);
+      if (cleanedEmail.includes('@') && !cleanedEmail.endsWith('@staff.atech.com')) {
+        const [uPart, pPart] = cleanedEmail.split('@');
+        setUsername(uPart);
+        setPharmacyName(pPart);
+        return handleStaffAuth(uPart, password, pPart);
+      } else {
+        setUsername(cleanedEmail);
+        return handleStaffAuth(cleanedEmail, password, pharmacyName);
+      }
+    }
+
     setLoading(true);
     const authToast = toast.loading(isSignUp ? 'Creating account...' : 'Signing in...');
     try {
       let user;
-      // Aggressive cleaning: remove all whitespace and non-ASCII characters
-      const cleanedEmail = email.replace(/[^a-zA-Z0-9@._%+-]/g, '').toLowerCase();
-      
-      console.log('[Auth Debug] Attempting login with:', { 
-        original: Array.from(email).map((c: string) => c.charCodeAt(0)), // Log char codes to find hidden chars
-        cleaned: cleanedEmail,
-        isSignUp 
-      });
 
       if (!cleanedEmail || !cleanedEmail.includes('@') || !cleanedEmail.includes('.') || cleanedEmail.length < 5) {
         toast.error('Please enter a valid email address');
@@ -964,40 +988,51 @@ const Login = ({ onLoginSuccess }: { onLoginSuccess: (user: any) => void }) => {
       if (isSignUp) {
         const result = await createUserWithEmailAndPassword(auth, cleanedEmail, password);
         user = result.user;
+        setAuthCredentialError(null);
         toast.success('Account created!', { id: authToast });
       } else {
-        const result = await signInWithEmailAndPassword(auth, cleanedEmail, password);
+        let result;
+        try {
+          result = await signInWithEmailAndPassword(auth, cleanedEmail, password);
+        } catch (firstErr: any) {
+          // Auto-retry with trimmed password in case of copy-paste trailing whitespace
+          if (firstErr.code === 'auth/invalid-credential' && password !== password.trim()) {
+            result = await signInWithEmailAndPassword(auth, cleanedEmail, password.trim());
+          } else {
+            throw firstErr;
+          }
+        }
         user = result.user;
+        setAuthCredentialError(null);
         toast.success('Welcome back!', { id: authToast });
       }
       await bootstrapAdmin(user);
       onLoginSuccess(user);
     } catch (error: any) {
-      if (error && error.code !== 'auth/email-already-in-use') {
-        console.log('Auth detail info:', error.message || error);
-      } else {
-        console.warn('Auth validation Check: Email is already in use');
-      }
+      console.warn('Auth notification:', error?.code, error?.message);
       let message = 'Authentication failed';
       if (error.code === 'auth/invalid-email') {
         const cleaned = email.replace(/[^a-zA-Z0-9@._%+-]/g, '').toLowerCase();
         message = `The email format "${cleaned}" was rejected by the system. Please ensure there are no special characters.`;
-      } else if (error.code === 'auth/invalid-credential') {
-        message = 'Invalid email or password. Please try again.';
-      } else if (error.code === 'auth/user-not-found') {
-        message = 'No account found with this email.';
+      } else if (error.code === 'auth/invalid-credential' || error.code === 'auth/user-not-found') {
+        setAuthCredentialError({
+          email: cleanedEmail,
+          message: 'Invalid credentials. If you haven\'t created an account yet, click below to register.'
+        });
+        message = 'Invalid email or password. If you don\'t have an account yet, click "Create Account" below to register.';
       } else if (error.code === 'auth/wrong-password') {
-        message = 'Incorrect password.';
+        message = 'Incorrect password. Please verify your password or use "Forgot Password?".';
       } else if (error.code === 'auth/email-already-in-use') {
         message = 'This email is already registered. We have switched you to the Sign In screen so you can log in instead.';
         setIsSignUp(false); // Automatically switch to sign in mode
+        setAuthCredentialError(null);
         setPassword(''); // Clear password for security and to allow fresh entry
       } else if (error.code === 'auth/too-many-requests') {
-        message = 'Too many failed attempts. Please try again later.';
+        message = 'Too many failed attempts. Please wait a moment and try again.';
       } else if (error.code === 'auth/network-request-failed') {
-        message = 'Connection failed. Please: 1. Check your internet. 2. Disable ad-blockers. 3. Try "Open in new tab" using the icon at the top right of this preview.';
+        message = 'Connection failed. Please check your internet connection.';
       }
-      toast.error(message, { id: authToast });
+      toast.error(message, { id: authToast, duration: 6000 });
     } finally {
       setLoading(false);
     }
@@ -1275,41 +1310,48 @@ const Login = ({ onLoginSuccess }: { onLoginSuccess: (user: any) => void }) => {
                 <Building2 className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
                 <input
                   type="text"
-                  required
+                  required={!username.includes('@') && !username.endsWith('@staff.atech.com')}
                   value={pharmacyName}
                   onChange={(e) => setPharmacyName(e.target.value)}
                   className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-100 dark:border-slate-700 rounded-2xl py-3 pl-12 pr-4 focus:outline-none focus:ring-2 focus:ring-blue-500/20 transition-all dark:text-white"
                   placeholder="e.g. Central Pharmacy"
                 />
               </div>
-              <p className="text-[10px] text-slate-400 dark:text-slate-500 ml-1 italic">Use the name provided by your manager.</p>
+              <p className="text-[10px] text-slate-400 dark:text-slate-500 ml-1 italic">
+                Use the pharmacy name provided by your manager, or include it in your username (e.g. <code>user@pharmacy</code>).
+              </p>
             </div>
 
             {/* Visual Feedback for Staff Credentials */}
-            {(username || pharmacyName) && (
-              <motion.div 
-                initial={{ opacity: 0, height: 0 }}
-                animate={{ opacity: 1, height: 'auto' }}
-                className="bg-slate-50 dark:bg-slate-800/50 border border-slate-100 dark:border-slate-700 rounded-2xl p-4 overflow-hidden"
-              >
-                <p className="text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase mb-2">Generated Login Identity</p>
-                <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 bg-blue-100 dark:bg-blue-900/20 rounded-full flex items-center justify-center text-blue-600 dark:text-blue-400">
-                    <User size={20} />
+            {(username || pharmacyName) && (() => {
+              const uParts = username.split('@');
+              const displayUser = (uParts[0] || '').toLowerCase().trim().replace(/[^a-z0-9]+/g, '.') || '...';
+              const derivedPharm = (uParts[1]?.trim() || pharmacyName).toLowerCase().trim().replace(/[^a-z0-9]+/g, '') || '...';
+              return (
+                <motion.div 
+                  initial={{ opacity: 0, height: 0 }}
+                  animate={{ opacity: 1, height: 'auto' }}
+                  className="bg-slate-50 dark:bg-slate-800/50 border border-slate-100 dark:border-slate-700 rounded-2xl p-4 overflow-hidden"
+                >
+                  <p className="text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase mb-2">Login Identity Preview</p>
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 bg-blue-100 dark:bg-blue-900/20 rounded-full flex items-center justify-center text-blue-600 dark:text-blue-400">
+                      <User size={20} />
+                    </div>
+                    <div>
+                      <p className="text-xs font-bold text-slate-700 dark:text-slate-300">
+                        {displayUser}
+                        <span className="text-blue-600 dark:text-blue-400">@</span>
+                        {derivedPharm}
+                      </p>
+                      <p className="text-[10px] text-slate-400 dark:text-slate-500">
+                        Internal ID: {displayUser}.{derivedPharm}@staff.atech.com
+                      </p>
+                    </div>
                   </div>
-                  <div>
-                    <p className="text-xs font-bold text-slate-700 dark:text-slate-300">
-                      {username.toLowerCase().trim().replace(/[^a-z0-9]+/g, '.') || '...'}
-                      <span className="text-blue-600 dark:text-blue-400">@</span>
-                      {pharmacyName.toLowerCase().trim().replace(/[^a-z0-9]+/g, '') || '...'}
-                    </p>
-                    <p className="text-[10px] text-slate-400 dark:text-slate-500">
-                      Internal ID: {username.toLowerCase().trim().replace(/[^a-z0-9]+/g, '.')}.{pharmacyName.toLowerCase().trim().replace(/[^a-z0-9]+/g, '')}@staff.atech.com
-                    </p>
-                  </div>
-                </div>
-              </motion.div>
-            )}
+                </motion.div>
+              );
+            })()}
 
             <div className="space-y-2">
               <label className="text-xs font-bold text-slate-400 dark:text-slate-500 uppercase ml-1">Username</label>
@@ -1319,7 +1361,16 @@ const Login = ({ onLoginSuccess }: { onLoginSuccess: (user: any) => void }) => {
                   type="text"
                   required
                   value={username}
-                  onChange={(e) => setUsername(e.target.value)}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    setUsername(val);
+                    if (val.includes('@') && !pharmacyName && !val.endsWith('@staff.atech.com')) {
+                      const afterAt = val.split('@')[1].trim();
+                      if (afterAt && !afterAt.includes('.')) {
+                        setPharmacyName(afterAt);
+                      }
+                    }
+                  }}
                   className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-100 dark:border-slate-700 rounded-2xl py-3 pl-12 pr-4 focus:outline-none focus:ring-2 focus:ring-blue-500/20 transition-all dark:text-white"
                   placeholder="firstname.lastname@pharmacy"
                 />
@@ -1443,6 +1494,33 @@ const Login = ({ onLoginSuccess }: { onLoginSuccess: (user: any) => void }) => {
             </div>
           )}
 
+          {authCredentialError && !isSignUp && (
+            <div className="p-3.5 bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800/40 rounded-2xl text-left space-y-2.5 animate-in fade-in">
+              <div className="flex items-start gap-2">
+                <AlertTriangle className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
+                <div className="space-y-1 text-slate-700 dark:text-slate-300">
+                  <p className="text-xs font-bold text-amber-900 dark:text-amber-300">Sign In Unsuccessful</p>
+                  <p className="text-[11px] leading-relaxed text-slate-600 dark:text-slate-400">
+                    The credentials for <span className="font-semibold text-slate-800 dark:text-slate-200">{authCredentialError.email}</span> were not recognized.
+                  </p>
+                  <p className="text-[10px] text-slate-500 dark:text-slate-400">
+                    If you haven't created an account yet, click below to register now with this email.
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setIsSignUp(true);
+                  setAuthCredentialError(null);
+                }}
+                className="w-full py-2.5 bg-amber-600 hover:bg-amber-700 text-white rounded-xl text-xs font-bold transition-all shadow-sm flex items-center justify-center gap-1.5 cursor-pointer active:scale-95"
+              >
+                Create New Account with {authCredentialError.email}
+              </button>
+            </div>
+          )}
+
           <button
             type="submit"
             disabled={loading}
@@ -1515,7 +1593,10 @@ const Login = ({ onLoginSuccess }: { onLoginSuccess: (user: any) => void }) => {
         <p className="text-center mt-8 text-sm text-slate-500 dark:text-slate-400 bg-slate-50 dark:bg-slate-800/50 p-4 rounded-2xl border border-slate-100 dark:border-slate-800">
           {isSignUp ? 'Already have an account?' : "Don't have an account?"}{' '}
           <button
-            onClick={() => setIsSignUp(!isSignUp)}
+            onClick={() => {
+              setIsSignUp(!isSignUp);
+              setAuthCredentialError(null);
+            }}
             className="text-blue-600 dark:text-blue-400 font-bold hover:underline ml-1"
           >
             {isSignUp ? 'Sign In' : 'Create one now'}
@@ -3022,12 +3103,11 @@ const MarketplaceView = ({ user }: { user: UserProfile }) => {
   const [activeAds, setActiveAds] = useState<any[]>([]);
   const [loggedImpressions, setLoggedImpressions] = useState<Record<string, boolean>>({});
 
-  const getPharmacyLocation = () => {
-    const handleNetworkFallback = async () => {
-      toast("Using network IP address to estimate location...", { duration: 3000 });
-      try {
-        const response = await fetch("https://ipapi.co/json/");
-        if (!response.ok) throw new Error("ipapi failed");
+  const getPharmacyLocation = async () => {
+    try {
+      toast("Estimating location via network...", { duration: 2500 });
+      const response = await fetch("https://ipapi.co/json/");
+      if (response.ok) {
         const data = await response.json();
         if (data.latitude && data.longitude) {
           const newLoc = { lat: data.latitude, lng: data.longitude };
@@ -3036,16 +3116,17 @@ const MarketplaceView = ({ user }: { user: UserProfile }) => {
             latitude: newLoc.lat,
             longitude: newLoc.lng
           });
-          toast.success("Location estimated via secure network ping!");
+          toast.success("Location set based on network location!");
           return;
         }
-      } catch (err) {
-        console.warn("ipapi.co failed, trying freeipapi...", err);
       }
+    } catch (err) {
+      console.warn("ipapi.co failed, attempting fallback...", err);
+    }
 
-      try {
-        const response = await fetch("https://freeipapi.com/api/json");
-        if (!response.ok) throw new Error("freeipapi failed");
+    try {
+      const response = await fetch("https://freeipapi.com/api/json");
+      if (response.ok) {
         const data = await response.json();
         if (data.latitude && data.longitude) {
           const newLoc = { lat: Number(data.latitude), lng: Number(data.longitude) };
@@ -3054,35 +3135,14 @@ const MarketplaceView = ({ user }: { user: UserProfile }) => {
             latitude: newLoc.lat,
             longitude: newLoc.lng
           });
-          toast.success("Location estimated via secure network ping!");
+          toast.success("Location set based on network location!");
           return;
         }
-      } catch (err) {
-        console.error("All geolocation services failed", err);
-        toast.error("Fully blocked by secure context. Please click manually on the Map to set location.");
       }
-    };
-
-    if ("geolocation" in navigator) {
-      navigator.geolocation.getCurrentPosition(
-        (position) => {
-          const newLoc = { lat: position.coords.latitude, lng: position.coords.longitude };
-          setUserLocation(newLoc);
-          updateDoc(doc(db, 'users', user.uid), {
-            latitude: newLoc.lat,
-            longitude: newLoc.lng
-          });
-          toast.success("GPS Location updated!");
-        },
-        (error) => {
-          console.warn("HTML5 Geolocation failed. Code: " + error.code + ", Message: " + error.message);
-          handleNetworkFallback();
-        },
-        { enableHighAccuracy: true, timeout: 5000, maximumAge: 0 }
-      );
-    } else {
-      handleNetworkFallback();
+    } catch (err) {
+      console.warn("freeipapi failed", err);
     }
+    toast.error("Could not determine network coordinates. Default territory used.");
   };
 
   useEffect(() => {
@@ -3556,7 +3616,7 @@ const MarketplaceView = ({ user }: { user: UserProfile }) => {
                               onClick={getPharmacyLocation}
                               className="text-[10px] font-bold text-blue-600 hover:underline flex items-center gap-1 font-sans"
                             >
-                              <MapPin size={10} /> Auto-Set GPS
+                              <MapPin size={10} /> Auto-Fill Location
                             </button>
                           </div>
                           
@@ -3570,61 +3630,28 @@ const MarketplaceView = ({ user }: { user: UserProfile }) => {
                             </div>
                           )}
 
-                          {!hasValidGoogleMapsKey ? (
-                            <div className="text-[10px] bg-amber-50 dark:bg-amber-950/20 text-amber-800 dark:text-amber-400 p-2.5 rounded-lg border border-amber-200 dark:border-amber-900/55 mt-2 font-sans">
-                              <p className="font-bold flex items-center gap-1"><AlertTriangle size={12} /> Map Setup Required</p>
-                              <p className="mt-0.5 leading-tight">To drop a custom delivery pin on the Google Map, configure your API Secret (<code>GOOGLE_MAPS_PLATFORM_KEY</code>).</p>
+                          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-3 space-y-2 text-xs font-sans">
+                            <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-2">
+                              <span className="font-bold text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
+                                <MapPin size={13} className="text-rose-500" /> Delivery Target Point
+                              </span>
+                              <span className="text-[10px] px-2 py-0.5 bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 font-bold rounded">
+                                {user.country || 'Ethiopia'}
+                              </span>
                             </div>
-                          ) : (
-                            <div className="border border-slate-200 dark:border-slate-800 rounded-xl overflow-hidden h-[180px] mt-2 relative group font-sans">
-                              <APIProvider apiKey={GOOGLE_MAPS_API_KEY} version="weekly">
-                                <Map
-                                  defaultCenter={{ lat: userLocation.lat || 9.03, lng: userLocation.lng || 38.74 }}
-                                  defaultZoom={11}
-                                  mapId="DEMO_MAP_ID"
-                                  internalUsageAttributionIds={['gmp_mcp_codeassist_v1_aistudio']}
-                                  style={{ width: '100%', height: '100%' }}
-                                  onClick={(e) => {
-                                    if (e.detail?.latLng) {
-                                      const lat = typeof e.detail.latLng.lat === 'function' ? e.detail.latLng.lat() : e.detail.latLng.lat;
-                                      const lng = typeof e.detail.latLng.lng === 'function' ? e.detail.latLng.lng() : e.detail.latLng.lng;
-                                      const newLoc = { lat, lng };
-                                      setUserLocation(newLoc);
-                                      updateDoc(doc(db, 'users', user.uid), {
-                                        latitude: lat,
-                                        longitude: lng
-                                      });
-                                      toast.success("Delivery pin updated!");
-                                    }
-                                  }}
-                                >
-                                  <AdvancedMarker 
-                                    position={{ lat: userLocation.lat || 9.03, lng: userLocation.lng || 38.74 }}
-                                    draggable={true}
-                                    onDragEnd={(e) => {
-                                      if (e.latLng) {
-                                        const lat = e.latLng.lat();
-                                        const lng = e.latLng.lng();
-                                        const newLoc = { lat, lng };
-                                        setUserLocation(newLoc);
-                                        updateDoc(doc(db, 'users', user.uid), {
-                                          latitude: lat,
-                                          longitude: lng
-                                        });
-                                        toast.success("Delivery pin dropped!");
-                                      }
-                                    }}
-                                    title="Your Pharmacy Delivery Pin"
-                                  >
-                                    <Pin background="#E11D48" glyphColor="#FFF" />
-                                  </AdvancedMarker>
-                                </Map>
-                              </APIProvider>
-                              <div className="absolute bottom-2 left-2 right-2 bg-black/60 dark:bg-slate-900/85 backdrop-blur-[1px] text-[9px] text-white py-1 px-2 rounded-md pointer-events-none text-center font-sans">
-                                Drag red pin or click map to set drop point
+                            <div className="grid grid-cols-2 gap-2 text-[11px]">
+                              <div>
+                                <span className="text-[9px] uppercase font-bold text-slate-400 block">Region / City</span>
+                                <span className="font-semibold text-slate-800 dark:text-slate-200">{user.region || user.city || 'Addis Ababa'}</span>
+                              </div>
+                              <div>
+                                <span className="text-[9px] uppercase font-bold text-slate-400 block">Coordinates</span>
+                                <span className="font-mono text-[10px] text-slate-600 dark:text-slate-400">
+                                  {userLocation.lat ? `${userLocation.lat.toFixed(4)}, ${userLocation.lng?.toFixed(4)}` : 'Default Grid'}
+                                </span>
                               </div>
                             </div>
-                          )}
+                          </div>
 
                           <div className="pt-2 space-y-1 font-sans">
                             {Object.keys(importersData).length > 0 && (Array.from(new Set(cart.map(i => i.product.importerId))) as string[]).map((id: string) => {
@@ -3931,12 +3958,11 @@ const ImporterInventoryView = ({ user }: { user: UserProfile }) => {
     }
   };
 
-  const getUserLocation = () => {
-    const handleNetworkFallback = async () => {
-      toast("Using network IP address to estimate warehouse location...", { duration: 3000 });
-      try {
-        const response = await fetch("https://ipapi.co/json/");
-        if (!response.ok) throw new Error("ipapi failed");
+  const getUserLocation = async () => {
+    try {
+      toast("Estimating warehouse location via network...", { duration: 2500 });
+      const response = await fetch("https://ipapi.co/json/");
+      if (response.ok) {
         const data = await response.json();
         if (data.latitude && data.longitude) {
           setWarehouse(prev => ({
@@ -3944,16 +3970,17 @@ const ImporterInventoryView = ({ user }: { user: UserProfile }) => {
             latitude: data.latitude,
             longitude: data.longitude
           }));
-          toast.success("Warehouse located via secure network ping!");
+          toast.success("Warehouse location estimated via network!");
           return;
         }
-      } catch (err) {
-        console.warn("ipapi.co failed, trying freeipapi...", err);
       }
+    } catch (err) {
+      console.warn("ipapi.co failed, trying freeipapi...", err);
+    }
 
-      try {
-        const response = await fetch("https://freeipapi.com/api/json");
-        if (!response.ok) throw new Error("freeipapi failed");
+    try {
+      const response = await fetch("https://freeipapi.com/api/json");
+      if (response.ok) {
         const data = await response.json();
         if (data.latitude && data.longitude) {
           setWarehouse(prev => ({
@@ -3961,34 +3988,14 @@ const ImporterInventoryView = ({ user }: { user: UserProfile }) => {
             latitude: Number(data.latitude),
             longitude: Number(data.longitude)
           }));
-          toast.success("Warehouse located via secure network ping!");
+          toast.success("Warehouse location estimated via network!");
           return;
         }
-      } catch (err) {
-        console.error("All geolocation services failed", err);
-        toast.error("Failed to estimate location. Please click on the map to place the warehouse.");
       }
-    };
-
-    if ("geolocation" in navigator) {
-      navigator.geolocation.getCurrentPosition(
-        (position) => {
-          setWarehouse(prev => ({
-            ...prev,
-            latitude: position.coords.latitude,
-            longitude: position.coords.longitude
-          }));
-          toast.success("GPS Coordinates updated!");
-        },
-        (error) => {
-          console.warn("HTML5 Geolocation failed. Code: " + error.code + ", Message: " + error.message);
-          handleNetworkFallback();
-        },
-        { enableHighAccuracy: true, timeout: 5000, maximumAge: 0 }
-      );
-    } else {
-      handleNetworkFallback();
+    } catch (err) {
+      console.warn("freeipapi failed", err);
     }
+    toast.error("Could not determine network coordinates. Please type coordinates manually.");
   };
 
   useEffect(() => {
@@ -4151,79 +4158,59 @@ const ImporterInventoryView = ({ user }: { user: UserProfile }) => {
                 <input type="text" value={warehouse.address || ''} onChange={e => setWarehouse({...warehouse, address: e.target.value})} className="w-full px-4 py-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 dark:text-white outline-none focus:border-blue-500 text-xs font-sans" placeholder="e.g. Merkato, Building A, Addis Ababa" />
               </div>
 
-              {!hasValidGoogleMapsKey ? (
-                <GoogleMapsPlaceholder message="Identify your warehouse position to display delivery paths and accurately calculate geographic rates." />
-              ) : (
-                <div className="space-y-2">
-                  <label className="text-xs font-bold text-slate-400 uppercase flex justify-between items-center">
-                    <span>Interactive Coverage Map</span>
-                    {activeOrders.length > 0 && (
-                      <span className="text-[9px] font-bold text-blue-600 bg-blue-50 dark:bg-blue-950/40 px-2 py-0.5 rounded-full font-sans">
-                        {activeOrders.filter(o => o.deliveryLat).length} active orders
-                      </span>
-                    )}
-                  </label>
-                  <div className="border border-slate-200 dark:border-slate-800 rounded-3xl overflow-hidden h-80 min-h-[300px] relative">
-                    <APIProvider apiKey={GOOGLE_MAPS_API_KEY} version="weekly">
-                      <Map
-                        defaultCenter={{ lat: warehouse.latitude || 9.03, lng: warehouse.longitude || 38.74 }}
-                        defaultZoom={11}
-                        mapId="DEMO_MAP_ID"
-                        internalUsageAttributionIds={['gmp_mcp_codeassist_v1_aistudio']}
-                        style={{ width: '100%', height: '100%' }}
-                        onClick={(e) => {
-                          if (e.detail?.latLng) {
-                            const lat = typeof e.detail.latLng.lat === 'function' ? e.detail.latLng.lat() : e.detail.latLng.lat;
-                            const lng = typeof e.detail.latLng.lng === 'function' ? e.detail.latLng.lng() : e.detail.latLng.lng;
-                            setWarehouse(prev => ({ ...prev, latitude: lat, longitude: lng }));
-                          }
-                        }}
-                      >
-                        <AdvancedMarker 
-                          position={{ lat: warehouse.latitude || 9.03, lng: warehouse.longitude || 38.74 }}
-                          draggable={true}
-                          onDragEnd={(e) => {
-                            if (e.latLng) {
-                              setWarehouse(prev => ({ ...prev, latitude: e.latLng.lat(), longitude: e.latLng.lng() }));
-                            }
-                          }}
-                          title="Your Warehouse"
-                        >
-                          <Pin background="#2563EB" glyphColor="#FFF" />
-                        </AdvancedMarker>
-
-                        {activeOrders.map(order => order.deliveryLat && order.deliveryLng && (
-                          <AdvancedMarker 
-                            key={order.id} 
-                            position={{ lat: order.deliveryLat, lng: order.deliveryLng }}
-                            title={`Order #${order.id?.slice(-6).toUpperCase()} to ${order.pharmacyName}`}
-                          >
-                            <Pin background="#E11D48" glyphColor="#FFF" scale={0.8} />
-                          </AdvancedMarker>
-                        ))}
-                      </Map>
-                    </APIProvider>
-                  </div>
-                  <p className="text-[9px] text-slate-400 text-center italic font-sans animate-pulse">Drag blue pin or click map to relocate key warehouse. Pharmacy delivery locations are marked in Red.</p>
+              <div className="bg-slate-50 dark:bg-slate-800/40 p-4 rounded-2xl border border-slate-200 dark:border-slate-800 space-y-3 font-sans">
+                <div className="flex justify-between items-center">
+                  <span className="text-xs font-bold text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
+                    <Globe size={14} className="text-blue-500" /> Geographic Logistics Profile
+                  </span>
+                  {activeOrders.length > 0 && (
+                    <span className="text-[10px] font-bold text-blue-600 bg-blue-50 dark:bg-blue-950/40 px-2 py-0.5 rounded-full">
+                      {activeOrders.length} active orders in dispatch
+                    </span>
+                  )}
                 </div>
-              )}
+                <div className="grid grid-cols-2 gap-3 text-xs">
+                  <div>
+                    <span className="text-[9px] uppercase font-bold text-slate-400 block">Hub Territory</span>
+                    <span className="font-semibold text-slate-800 dark:text-slate-200">{user.country || 'Ethiopia'} • {user.city || 'Addis Ababa'}</span>
+                  </div>
+                  <div>
+                    <span className="text-[9px] uppercase font-bold text-slate-400 block">Dispatch Status</span>
+                    <span className="font-semibold text-emerald-600 dark:text-emerald-400">Ready for Routing</span>
+                  </div>
+                </div>
+              </div>
 
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-2">
                   <label className="text-xs font-bold text-slate-400 uppercase">Latitude</label>
-                  <input type="number" step="0.000001" value={warehouse.latitude ?? 0} readOnly className="w-full px-4 py-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/15 text-slate-500 outline-none text-xs" />
+                  <input 
+                    type="number" 
+                    step="0.000001" 
+                    value={warehouse.latitude ?? ''} 
+                    onChange={e => setWarehouse(prev => ({ ...prev, latitude: parseFloat(e.target.value) || 0 }))}
+                    className="w-full px-4 py-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 dark:text-white outline-none text-xs focus:border-blue-500" 
+                    placeholder="e.g. 9.0300"
+                  />
                 </div>
                 <div className="space-y-2">
                   <label className="text-xs font-bold text-slate-400 uppercase">Longitude</label>
-                  <input type="number" step="0.000001" value={warehouse.longitude ?? 0} readOnly className="w-full px-4 py-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/15 text-slate-500 outline-none text-xs" />
+                  <input 
+                    type="number" 
+                    step="0.000001" 
+                    value={warehouse.longitude ?? ''} 
+                    onChange={e => setWarehouse(prev => ({ ...prev, longitude: parseFloat(e.target.value) || 0 }))}
+                    className="w-full px-4 py-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 dark:text-white outline-none text-xs focus:border-blue-500" 
+                    placeholder="e.g. 38.7400"
+                  />
                 </div>
               </div>
               <button 
                 type="button"
                 onClick={getUserLocation}
-                className="w-full py-3 border-2 border-dashed border-slate-200 dark:border-slate-800 rounded-2xl text-xs font-bold text-slate-500 hover:border-blue-400 hover:text-blue-500 transition-all flex items-center justify-center gap-2 font-sans"
+                className="w-full py-3 border-2 border-dashed border-slate-200 dark:border-slate-800 rounded-2xl text-xs font-bold text-slate-500 hover:border-blue-400 hover:text-blue-500 transition-all flex items-center justify-center gap-2 font-sans cursor-pointer"
               >
-                <MapPin size={16} /> Mark Current Location as Warehouse
+                <MapPin size={16} /> Auto-Fill Location Coordinates
               </button>
               <p className="text-[10px] text-slate-400 italic">This will be used to automatically calculate distance-based delivery fees for pharmacies.</p>
             </div>
@@ -4499,48 +4486,28 @@ const OrdersView = ({ user }: { user: UserProfile }) => {
                   onClick={() => setExpandedMapOrderId(expandedMapOrderId === order.id ? null : order.id)}
                   className="flex items-center gap-1.5 text-xs font-bold text-blue-600 dark:text-blue-400 hover:underline font-sans"
                 >
-                  <Globe size={14} />
-                  {expandedMapOrderId === order.id ? 'Hide Delivery Route Map' : 'Show Delivery Route Map'}
+                  <MapPin size={14} />
+                  {expandedMapOrderId === order.id ? 'Hide Routing Coordinates' : 'View Routing Coordinates'}
                 </button>
 
                 {expandedMapOrderId === order.id && (
-                  <div className="mt-3">
-                    {!hasValidGoogleMapsKey ? (
-                      <div className="text-[10px] bg-amber-50 dark:bg-amber-950/20 text-amber-800 dark:text-amber-400 p-3 rounded-xl border border-amber-200 dark:border-amber-900/50 text-center font-sans">
-                        Please ask the system administrator to add your Google Maps key (<code>GOOGLE_MAPS_PLATFORM_KEY</code>) through AI Secrets to access routing maps.
+                  <div className="mt-3 p-3.5 bg-slate-50 dark:bg-slate-800/40 rounded-xl border border-slate-200 dark:border-slate-800 space-y-2 text-xs font-sans">
+                    <div className="flex justify-between items-center text-slate-700 dark:text-slate-300 font-bold border-b border-slate-200/60 dark:border-slate-700/60 pb-1.5">
+                      <span>Delivery Location Details</span>
+                      <span className="text-[10px] text-emerald-600 font-bold">Standard Route</span>
+                    </div>
+                    <div className="grid grid-cols-2 gap-2 text-[11px]">
+                      <div>
+                        <span className="text-[9px] uppercase font-bold text-slate-400 block">Pharmacy Target</span>
+                        <span className="font-semibold text-slate-800 dark:text-slate-200">{order.pharmacyName || 'Pharmacy'}</span>
                       </div>
-                    ) : (
-                      <div className="border border-slate-200 dark:border-slate-800 rounded-2xl overflow-hidden h-60 min-h-[240px] relative">
-                        <APIProvider apiKey={GOOGLE_MAPS_API_KEY} version="weekly">
-                          <Map
-                            defaultCenter={{
-                              lat: ((order as any).deliveryLat + ((order as any).importerLat || (order as any).deliveryLat)) / 2,
-                              lng: ((order as any).deliveryLng + ((order as any).importerLng || (order as any).deliveryLng)) / 2
-                            }}
-                            defaultZoom={11}
-                            mapId="DEMO_MAP_ID"
-                            internalUsageAttributionIds={['gmp_mcp_codeassist_v1_aistudio']}
-                            style={{ width: '100%', height: '100%' }}
-                          >
-                            <AdvancedMarker 
-                              position={{ lat: (order as any).deliveryLat, lng: (order as any).deliveryLng }}
-                              title={`Delivery Address - Drop Point`}
-                            >
-                              <Pin background="#E11D48" glyphColor="#FFF" />
-                            </AdvancedMarker>
-
-                            {(order as any).importerLat && (order as any).importerLng && (
-                              <AdvancedMarker 
-                                position={{ lat: (order as any).importerLat, lng: (order as any).importerLng }}
-                                title={`Warehouse Origin`}
-                              >
-                                <Pin background="#2563EB" glyphColor="#FFF" />
-                              </AdvancedMarker>
-                            )}
-                          </Map>
-                        </APIProvider>
+                      <div>
+                        <span className="text-[9px] uppercase font-bold text-slate-400 block">GPS Coordinates</span>
+                        <span className="font-mono text-[10px] text-slate-600 dark:text-slate-400">
+                          {(order as any).deliveryLat?.toFixed(4)}, {(order as any).deliveryLng?.toFixed(4)}
+                        </span>
                       </div>
-                    )}
+                    </div>
                   </div>
                 )}
               </div>
@@ -6438,51 +6405,61 @@ const Sidebar = ({
         />
       )}
       <div className={`
-        fixed lg:sticky inset-y-0 left-0 z-[100] h-screen flex flex-col bg-white dark:bg-slate-950 border-r border-slate-200 dark:border-slate-800 transition-all duration-300 overflow-y-auto scrollbar-hide
+        fixed lg:sticky top-0 left-0 z-[100] h-screen max-h-screen flex flex-col shrink-0 bg-white dark:bg-slate-950 border-r border-slate-200 dark:border-slate-800 transition-all duration-300
         ${isCollapsed ? 'w-20 -translate-x-full lg:w-20 lg:translate-x-0' : 'w-72 translate-x-0 lg:w-72'}
       `}>
-      <div className={`${isCollapsed ? 'p-4' : 'p-6'}`}>
-        <div className={`flex items-center ${isCollapsed ? 'flex-col gap-6' : 'justify-between'} mb-10`}>
-          <div className="flex items-center gap-3 group">
-            <div className={`w-12 h-12 bg-blue-600 rounded-2xl flex items-center justify-center shadow-lg shadow-blue-100 dark:shadow-[0_0_20px_rgba(37,99,235,0.4)] transition-all duration-500 group-hover:rotate-6`}>
-              <Package className="text-white w-7 h-7" />
-            </div>
-            {!isCollapsed && (
-              <div className="flex flex-col">
-                <span className="font-black text-xl text-slate-900 dark:text-white tracking-tighter leading-none">ATECH</span>
-                <span className="text-[10px] font-bold text-blue-600 dark:text-blue-400 uppercase tracking-[0.2em] mt-1">East Africa</span>
-                <span className="text-[8px] text-slate-500 dark:text-slate-400 leading-tight mt-1 font-bold">Healthcare Intelligence Platform</span>
-                <span className="text-[8px] text-slate-400 dark:text-slate-500 lowercase tracking-tight mt-0.5 font-medium">powered by emerge globally</span>
+        {/* Header with branding and collapse toggle */}
+        <div className={`shrink-0 ${isCollapsed ? 'p-3' : 'p-5'} border-b border-slate-100 dark:border-slate-800/80 bg-white dark:bg-slate-950`}>
+          <div className={`flex items-center ${isCollapsed ? 'flex-col gap-4' : 'justify-between'}`}>
+            <div className="flex items-center gap-3 group min-w-0">
+              <div className="w-11 h-11 bg-blue-600 rounded-2xl flex items-center justify-center shadow-lg shadow-blue-100 dark:shadow-[0_0_20px_rgba(37,99,235,0.4)] transition-all duration-500 group-hover:rotate-6 shrink-0">
+                <Package className="text-white w-6 h-6" />
               </div>
-            )}
-          </div>
-          <button 
-            onClick={onToggle}
-            className={`p-2.5 rounded-xl hover:bg-slate-50 dark:hover:bg-slate-900 text-slate-400 hover:text-blue-600 transition-all border border-transparent hover:border-slate-200 dark:hover:border-slate-800 shadow-sm hover:shadow-md ${isCollapsed ? '' : ''}`}
-            title={isCollapsed ? "Expand Sidebar" : "Collapse Sidebar"}
-          >
-            {isCollapsed ? <ChevronRight size={20} /> : <ChevronLeft size={20} />}
-          </button>
-        </div>
-        <nav className="space-y-1.5">
-          {filteredMenuItems.map((item) => (
-            <button 
-              key={item.id} 
-              onClick={() => setActiveTab(item.id)} 
-              id={`nav-item-${item.id}`}
-              className={`w-full flex items-center ${isCollapsed ? 'justify-center py-4' : 'gap-3 px-4 py-3.5'} rounded-2xl transition-all relative group ${activeTab === item.id ? 'bg-blue-600 text-white shadow-lg shadow-blue-100 dark:shadow-none font-bold' : 'text-slate-500 dark:text-slate-400 hover:bg-slate-100/50 dark:hover:bg-slate-900 hover:text-slate-900 dark:hover:text-white'}`}
-              title={isCollapsed ? item.label : ''}
-            >
-              <item.icon size={22} className={`${activeTab === item.id ? 'scale-110' : 'group-hover:scale-110 transition-transform'}`} /> 
-              {!isCollapsed && <span className="text-sm">{item.label}</span>}
-              {activeTab === item.id && isCollapsed && (
-                <motion.div layoutId="active-pill" className="absolute left-0 w-1 h-6 bg-white rounded-r-full" />
+              {!isCollapsed && (
+                <div className="flex flex-col min-w-0">
+                  <span className="font-black text-xl text-slate-900 dark:text-white tracking-tighter leading-none">ATECH</span>
+                  <span className="text-[10px] font-bold text-blue-600 dark:text-blue-400 uppercase tracking-[0.2em] mt-1">East Africa</span>
+                  <span className="text-[8px] text-slate-500 dark:text-slate-400 leading-tight mt-1 font-bold truncate">Healthcare Intelligence Platform</span>
+                  <span className="text-[8px] text-slate-400 dark:text-slate-500 lowercase tracking-tight mt-0.5 font-medium">powered by emerge globally</span>
+                </div>
               )}
+            </div>
+            <button 
+              onClick={onToggle}
+              className="p-2 rounded-xl hover:bg-slate-50 dark:hover:bg-slate-900 text-slate-400 hover:text-blue-600 transition-all border border-transparent hover:border-slate-200 dark:hover:border-slate-800 shadow-sm hover:shadow-md shrink-0"
+              title={isCollapsed ? "Expand Sidebar" : "Collapse Sidebar"}
+            >
+              {isCollapsed ? <ChevronRight size={18} /> : <ChevronLeft size={18} />}
             </button>
-          ))}
-        </nav>
-      </div>
-      <div className="mt-auto p-6 border-t border-slate-100 dark:border-slate-800">
+          </div>
+        </div>
+
+        {/* Scrollable navigation area */}
+        <div className="flex-1 overflow-y-auto scrollbar-hide p-3 space-y-1">
+          <nav className="space-y-1">
+            {filteredMenuItems.map((item) => (
+              <button 
+                key={item.id} 
+                onClick={() => {
+                  setActiveTab(item.id);
+                  if (typeof window !== 'undefined' && window.innerWidth < 1024) {
+                    onToggle();
+                  }
+                }} 
+                id={`nav-item-${item.id}`}
+                className={`w-full flex items-center ${isCollapsed ? 'justify-center py-3.5' : 'gap-3 px-3.5 py-2.5'} rounded-2xl transition-all relative group ${activeTab === item.id ? 'bg-blue-600 text-white shadow-lg shadow-blue-100 dark:shadow-none font-bold' : 'text-slate-500 dark:text-slate-400 hover:bg-slate-100/50 dark:hover:bg-slate-900 hover:text-slate-900 dark:hover:text-white'}`}
+                title={isCollapsed ? item.label : ''}
+              >
+                <item.icon size={20} className={`${activeTab === item.id ? 'scale-110' : 'group-hover:scale-110 transition-transform'} shrink-0`} /> 
+                {!isCollapsed && <span className="text-sm truncate text-left">{item.label}</span>}
+                {activeTab === item.id && isCollapsed && (
+                  <motion.div layoutId="active-pill" className="absolute left-0 w-1 h-6 bg-white rounded-r-full" />
+                )}
+              </button>
+            ))}
+          </nav>
+        </div>
+      <div className="mt-auto p-4 sm:p-5 border-t border-slate-100 dark:border-slate-800 shrink-0 bg-white dark:bg-slate-950">
         {!isCollapsed && (role === 'pharmacy' || role === 'importer') && (
           <div className="mb-4 p-4 bg-blue-50 dark:bg-blue-900/20 rounded-2xl border border-blue-100 dark:border-blue-800">
             <p className="text-[10px] font-bold text-blue-600 dark:text-blue-400 uppercase tracking-widest mb-1">Referral Code</p>
@@ -6895,44 +6872,6 @@ const DashboardView = ({
   const [forecastProducts, setForecastProducts] = useState<InventoryProduct[]>([]);
   const [forecastSales, setForecastSales] = useState<Sale[]>([]);
   const [loading, setLoading] = useState(true);
-
-  const [geminiInsights, setGeminiInsights] = useState<{
-    isCachedFallback?: boolean;
-    outbreakAlerts?: { disease: string; severity: 'high' | 'medium' | 'low'; region: string; description: string }[];
-    forecastingSuggestions?: string[];
-    recommendedMeds?: { category: string; medicines: string; rationale: string }[];
-  } | null>(null);
-  const [loadingGemini, setLoadingGemini] = useState(false);
-  const [geminiError, setGeminiError] = useState<string | null>(null);
-
-  const fetchGeminiInsights = async () => {
-    setLoadingGemini(true);
-    setGeminiError(null);
-    try {
-      const res = await fetch('/api/gemini/forecast', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ country: user.country || 'Ethiopia' }),
-      });
-      if (res.ok) {
-        const data = await res.json();
-        setGeminiInsights(data);
-      } else {
-        throw new Error('Failed to load local insights');
-      }
-    } catch (err: any) {
-      console.error('[DashboardView] Error loading Gemini insights:', err);
-      setGeminiError(err?.message || 'Could not connect to forecasting agent.');
-    } finally {
-      setLoadingGemini(false);
-    }
-  };
-
-  useEffect(() => {
-    fetchGeminiInsights();
-  }, [user.country]);
 
   const forecastAlertCount = React.useMemo(() => {
     if (!forecastProducts.length) return 0;
@@ -7663,112 +7602,58 @@ const DashboardView = ({
         )}
 
         <div className={`${hasPermission('sales') ? 'lg:col-span-1' : 'lg:col-span-3'} space-y-6`}>
-          <div className="bg-gradient-to-br from-indigo-950 via-slate-900 to-slate-950 p-6 rounded-3xl text-white shadow-xl border border-slate-800 space-y-5">
+          <div className="bg-slate-900 dark:bg-slate-900/90 p-6 rounded-3xl text-white shadow-xl border border-slate-800 space-y-5">
             <div className="flex justify-between items-center">
-              <h3 className="text-sm font-bold flex flex-col text-indigo-300">
+              <h3 className="text-sm font-bold flex flex-col text-slate-200">
                 <div className="flex items-center gap-2">
-                  <Sparkles size={16} className="text-amber-400 animate-pulse shrink-0" />
-                  <span>Smart Insights</span>
+                  <Activity size={16} className="text-emerald-400 shrink-0" />
+                  <span>Branch Operations</span>
                 </div>
-                <span className="text-[10px] text-indigo-400/80 font-semibold mt-1">
-                  Daily Focus • {new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' })}
+                <span className="text-[10px] text-slate-400 font-semibold mt-1">
+                  Active Profile • {new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' })}
                 </span>
               </h3>
-              <div className="flex flex-col items-end gap-1">
-                <span className="text-[9px] px-2 py-0.5 bg-indigo-500/20 text-indigo-300 font-extrabold uppercase rounded-full border border-indigo-500/30">
-                  {user.country || 'Ethiopia'}
-                </span>
-                {geminiInsights?.isCachedFallback && (
-                  <span className="text-[7px] px-1.5 py-0.5 bg-amber-500/10 text-amber-300 font-bold uppercase rounded border border-amber-500/20 leading-none">
-                    Offline Sim
-                  </span>
-                )}
-              </div>
+              <span className="text-[9px] px-2.5 py-1 bg-slate-800 text-slate-300 font-extrabold uppercase rounded-full border border-slate-700">
+                {user.country || 'Ethiopia'}
+              </span>
             </div>
 
-            {loadingGemini ? (
-              <div className="py-8 flex flex-col items-center justify-center space-y-2">
-                <div className="w-5 h-5 border-2 border-indigo-400 border-t-transparent rounded-full animate-spin"></div>
-                <p className="text-[10px] text-slate-400 font-medium text-center">Analysing seasonal outbreak risks...</p>
-              </div>
-            ) : geminiError ? (
-              <div className="p-3 bg-red-950/30 border border-red-900/50 rounded-xl text-center space-y-2">
-                <p className="text-[10px] text-red-400 leading-relaxed font-medium">{geminiError}</p>
-                <button
-                  onClick={fetchGeminiInsights}
-                  className="px-2.5 py-1 bg-red-900 hover:bg-red-800 text-white rounded text-[9px] font-black uppercase transition-all cursor-pointer"
-                >
-                  Retry
-                </button>
-              </div>
-            ) : geminiInsights ? (
-              <div className="space-y-4">
-                {/* Outbreak Warning Section */}
-                {geminiInsights.outbreakAlerts && geminiInsights.outbreakAlerts.length > 0 && (
-                  <div className="bg-white/5 backdrop-blur-sm p-3.5 rounded-2xl border border-white/10 space-y-2">
-                    <div className="flex items-center justify-between">
-                      <span className="text-[10px] font-bold text-red-400 uppercase tracking-wider flex items-center gap-1">
-                        <Activity size={10} /> Active Threat
-                      </span>
-                      <span className="text-[8px] px-1.5 py-0.5 bg-red-500/15 text-red-400 font-black rounded uppercase">
-                        {geminiInsights.outbreakAlerts[0].severity} risk
-                      </span>
-                    </div>
-                    <strong className="text-xs font-extrabold text-white block">
-                      {geminiInsights.outbreakAlerts[0].disease}
-                    </strong>
-                    <p className="text-[9px] text-indigo-300 font-semibold flex items-center gap-1">
-                      <MapPin size={10} /> {geminiInsights.outbreakAlerts[0].region}
-                    </p>
-                    <p className="text-[10px] text-slate-300 leading-relaxed font-medium">
-                      {geminiInsights.outbreakAlerts[0].description}
-                    </p>
-                  </div>
+            <div className="space-y-3">
+              {/* Branch / Entity Location */}
+              <div className="bg-white/5 backdrop-blur-sm p-3.5 rounded-2xl border border-white/10 space-y-1.5">
+                <span className="text-[10px] font-bold text-blue-400 uppercase tracking-wider block">Location & Territory</span>
+                <strong className="text-xs font-bold text-white block">
+                  {user.pharmacyName || user.importerName || user.displayName || 'Registered Entity'}
+                </strong>
+                <p className="text-[10px] text-slate-300 font-semibold flex items-center gap-1.5">
+                  <MapPin size={11} className="text-rose-400 shrink-0" /> {user.region || user.city || 'Addis Ababa'}, {user.country || 'Ethiopia'}
+                </p>
+                {user.address && (
+                  <p className="text-[10px] text-slate-400">
+                    {user.address}
+                  </p>
                 )}
-
-                {/* Stocking Tip Section */}
-                {geminiInsights.recommendedMeds && geminiInsights.recommendedMeds.length > 0 && (
-                  <div className="bg-white/5 backdrop-blur-sm p-3.5 rounded-2xl border border-white/10 space-y-1.5">
-                    <span className="text-[10px] font-bold text-emerald-400 uppercase tracking-wider block">Recommended Stock</span>
-                    <strong className="text-xs font-bold text-white block">
-                      {geminiInsights.recommendedMeds[0].category}
-                    </strong>
-                    <p className="text-[9px] text-emerald-300/90 font-black">
-                      {geminiInsights.recommendedMeds[0].medicines}
-                    </p>
-                    <p className="text-[10px] text-slate-300 leading-relaxed font-medium">
-                      {geminiInsights.recommendedMeds[0].rationale}
-                    </p>
-                  </div>
-                )}
-
-                {/* Daily Advisories */}
-                {geminiInsights.forecastingSuggestions && geminiInsights.forecastingSuggestions.length > 0 && (
-                  <div className="bg-white/5 backdrop-blur-sm p-3.5 rounded-2xl border border-white/10 space-y-1.5">
-                    <span className="text-[10px] font-bold text-indigo-400 uppercase tracking-wider block">Daily Advisory</span>
-                    <p className="text-[10px] text-slate-300 leading-relaxed font-medium">
-                      {geminiInsights.forecastingSuggestions[0]}
-                    </p>
-                  </div>
-                )}
-
-                <button
-                  onClick={fetchGeminiInsights}
-                  className="w-full py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl text-[9px] font-black uppercase tracking-wider transition-all flex items-center justify-center gap-1.5 border border-slate-700 cursor-pointer"
-                >
-                  <RefreshCw size={10} /> Refresh AI Forecast
-                </button>
               </div>
-            ) : (
-              <div className="text-center py-6">
-                <button
-                  onClick={fetchGeminiInsights}
-                  className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold cursor-pointer transition-all"
-                >
-                  Load Gemini Insights
-                </button>
+
+              {/* Inventory & Expiry Alerts */}
+              <div className="bg-white/5 backdrop-blur-sm p-3.5 rounded-2xl border border-white/10 space-y-2">
+                <span className="text-[10px] font-bold text-amber-400 uppercase tracking-wider block">Stock Readiness</span>
+                <div className="grid grid-cols-2 gap-2 text-center">
+                  <div className="bg-slate-800/80 p-2 rounded-xl border border-slate-700/60">
+                    <span className="text-[9px] font-bold text-slate-400 uppercase block">Expiring (90d)</span>
+                    <span className={`text-base font-black ${expiringSoonCount > 0 ? 'text-amber-400' : 'text-emerald-400'}`}>
+                      {expiringSoonCount}
+                    </span>
+                  </div>
+                  <div className="bg-slate-800/80 p-2 rounded-xl border border-slate-700/60">
+                    <span className="text-[9px] font-bold text-slate-400 uppercase block">Reorder Alerts</span>
+                    <span className={`text-base font-black ${forecastAlertCount > 0 ? 'text-rose-400' : 'text-emerald-400'}`}>
+                      {forecastAlertCount}
+                    </span>
+                  </div>
+                </div>
               </div>
-            )}
+            </div>
           </div>
         </div>
       </div>
@@ -7856,7 +7741,7 @@ const InventoryView = ({
   const [searchQuery, setSearchQuery] = useState('');
   const [formData, setFormData] = useState<Partial<InventoryProduct>>({
     name: '', category: 'Medicine', price: 0, costPrice: 0, quantity: 0, batchNumber: '', expiryDate: '', lowStockThreshold: 5, supplier: '', branchId: '',
-    genericName: '', countryOfOrigin: '', purchaseUnit: '', dispensingUnit: '', conversionFactor: 1
+    genericName: '', countryOfOrigin: '', purchaseUnit: 'Box', dispensingUnit: 'Strip', conversionFactor: 10
   });
 
   const ownerId = user.role === 'staff' ? user.pharmacyId : user.uid;
@@ -7949,7 +7834,7 @@ const InventoryView = ({
       setIsAdding(false);
       setFormData({ 
         name: '', category: 'Medicine', price: 0, costPrice: 0, quantity: 0, batchNumber: '', expiryDate: '', lowStockThreshold: 5, supplier: '', branchId: '',
-        genericName: '', countryOfOrigin: '', purchaseUnit: '', dispensingUnit: '', conversionFactor: 1
+        genericName: '', countryOfOrigin: '', purchaseUnit: 'Box', dispensingUnit: 'Strip', conversionFactor: 10
       });
       toast.success(navigator.onLine ? 'Product added to inventory and logged to Bin Card' : 'Product added offline successfully!');
     } catch (error) {
@@ -8016,7 +7901,7 @@ const InventoryView = ({
       setEditingProduct(null);
       setFormData({ 
         name: '', category: 'Medicine', price: 0, costPrice: 0, quantity: 0, batchNumber: '', expiryDate: '', lowStockThreshold: 5, supplier: '', branchId: '',
-        genericName: '', countryOfOrigin: '', purchaseUnit: '', dispensingUnit: '', conversionFactor: 1
+        genericName: '', countryOfOrigin: '', purchaseUnit: 'Box', dispensingUnit: 'Strip', conversionFactor: 10
       });
       toast.success(navigator.onLine ? 'Inventory updated successfully' : 'Inventory updated offline!');
     } catch (error) {
@@ -8101,18 +7986,26 @@ const InventoryView = ({
               <label className="text-sm font-bold text-slate-700 dark:text-slate-300">Country of Origin</label>
               <input type="text" value={formData.countryOfOrigin || ''} onChange={e => setFormData({...formData, countryOfOrigin: e.target.value})} className="w-full px-4 py-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 dark:text-white outline-none focus:border-blue-500" placeholder="e.g. Ethiopia, India, Germany" />
             </div>
-            <div className="space-y-2">
-              <label className="text-sm font-bold text-slate-700 dark:text-slate-300">Purchase Unit</label>
-              <input type="text" value={formData.purchaseUnit || ''} onChange={e => setFormData({...formData, purchaseUnit: e.target.value})} className="w-full px-4 py-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 dark:text-white outline-none focus:border-blue-500" placeholder="e.g. Pack, Box, Bottle" />
-            </div>
-            <div className="space-y-2">
-              <label className="text-sm font-bold text-slate-700 dark:text-slate-300">Dispensing Unit</label>
-              <input type="text" value={formData.dispensingUnit || ''} onChange={e => setFormData({...formData, dispensingUnit: e.target.value})} className="w-full px-4 py-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 dark:text-white outline-none focus:border-blue-500" placeholder="e.g. Strip, Tablet, Capsule" />
-            </div>
-            <div className="space-y-2">
-              <label className="text-sm font-bold text-slate-700 dark:text-slate-300">Conversion Factor</label>
-              <input type="number" min="1" value={formData.conversionFactor ?? 1} onChange={e => setFormData({...formData, conversionFactor: Math.max(1, Number(e.target.value))})} className="w-full px-4 py-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 dark:text-white outline-none focus:border-blue-500" placeholder="e.g. 10 (1 Pack = 10 Strips)" />
-            </div>
+            {/* Purchase Unit, Relatable Dispensing Unit Menu & Automatic Quantity Calculator */}
+            <UnitSelectorFields
+              purchaseUnit={formData.purchaseUnit || 'Box'}
+              dispensingUnit={formData.dispensingUnit || 'Strip'}
+              conversionFactor={formData.conversionFactor || 10}
+              quantity={formData.quantity ?? 0}
+              showQuantitySection={true}
+              onChange={({ purchaseUnit, dispensingUnit, conversionFactor, quantity }) => {
+                setFormData(prev => ({
+                  ...prev,
+                  purchaseUnit,
+                  dispensingUnit,
+                  conversionFactor,
+                  ...(quantity !== undefined ? { quantity } : {})
+                }));
+              }}
+              onQuantityChange={newQty => {
+                setFormData(prev => ({ ...prev, quantity: newQty }));
+              }}
+            />
             <div className="space-y-2">
               <label className="text-sm font-bold text-slate-700 dark:text-slate-300">Category</label>
               <select value={formData.category || 'Medicine'} onChange={e => setFormData({...formData, category: e.target.value})} className="w-full px-4 py-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 dark:text-white outline-none focus:border-blue-500">
@@ -8133,23 +8026,49 @@ const InventoryView = ({
               <input type="text" value={formData.batchNumber || ''} onChange={e => setFormData({...formData, batchNumber: e.target.value})} className="w-full px-4 py-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 dark:text-white outline-none focus:border-blue-500" placeholder="BN-12345" />
             </div>
             <div className="space-y-2">
-              <label className="text-sm font-bold text-slate-700 dark:text-slate-300">Selling Price (ETB)</label>
+              <label className="text-sm font-bold text-slate-700 dark:text-slate-300 flex justify-between">
+                <span>Selling Price (ETB)</span>
+                <span className="text-xs text-emerald-600 dark:text-emerald-400 font-semibold">per {formData.dispensingUnit || 'Strip'}</span>
+              </label>
               <input type="number" value={formData.price ?? 0} onChange={e => setFormData({...formData, price: Number(e.target.value)})} className="w-full px-4 py-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 dark:text-white outline-none focus:border-blue-500" />
+              {formData.conversionFactor && formData.conversionFactor > 1 && (formData.price || 0) > 0 && (
+                <p className="text-[11px] text-slate-400">
+                  = {((formData.price || 0) * (formData.conversionFactor || 1)).toLocaleString()} ETB per {formData.purchaseUnit || 'Box'}
+                </p>
+              )}
             </div>
             <div className="space-y-2">
-              <label className="text-sm font-bold text-slate-700 dark:text-slate-300">Cost Price (ETB)</label>
+              <label className="text-sm font-bold text-slate-700 dark:text-slate-300 flex justify-between">
+                <span>Cost Price (ETB)</span>
+                <span className="text-xs text-blue-600 dark:text-blue-400 font-semibold">per {formData.purchaseUnit || 'Box'}</span>
+              </label>
               <input type="number" value={formData.costPrice ?? 0} onChange={e => setFormData({...formData, costPrice: Number(e.target.value)})} className="w-full px-4 py-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 dark:text-white outline-none focus:border-blue-500" />
+              {formData.conversionFactor && formData.conversionFactor > 1 && (formData.costPrice || 0) > 0 && (
+                <p className="text-[11px] text-slate-400">
+                  = {((formData.costPrice || 0) / (formData.conversionFactor || 1)).toFixed(2)} ETB per {formData.dispensingUnit || 'Strip'}
+                </p>
+              )}
             </div>
             <div className="space-y-2">
-              <label className="text-sm font-bold text-slate-700 dark:text-slate-300">Quantity</label>
-              <input type="number" min="0" value={formData.quantity ?? 0} onChange={e => setFormData({...formData, quantity: Math.max(0, Number(e.target.value))})} className="w-full px-4 py-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 dark:text-white outline-none focus:border-blue-500" />
+              <label className="text-sm font-bold text-slate-700 dark:text-slate-300 flex justify-between">
+                <span>Intake Stock ({formData.purchaseUnit || 'Box'}es)</span>
+                <span className="text-xs text-emerald-600 dark:text-emerald-400 font-bold">
+                  = {((formData.quantity || 0) * (formData.conversionFactor || 1)).toFixed(0)} {formData.dispensingUnit || 'Strip'}s
+                </span>
+              </label>
+              <input type="number" min="0" step="any" value={formData.quantity ?? 0} onChange={e => setFormData({...formData, quantity: Math.max(0, Number(e.target.value))})} className="w-full px-4 py-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 dark:text-white outline-none focus:border-blue-500" />
             </div>
             <div className="space-y-2">
               <label className="text-sm font-bold text-slate-700 dark:text-slate-300">Expiry Date</label>
               <input type="date" value={formData.expiryDate || ''} onChange={e => setFormData({...formData, expiryDate: e.target.value})} className="w-full px-4 py-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 dark:text-white outline-none focus:border-blue-500" />
             </div>
             <div className="space-y-2">
-              <label className="text-sm font-bold text-slate-700 dark:text-slate-300">Low Stock Alert at</label>
+              <label className="text-sm font-bold text-slate-700 dark:text-slate-300 flex justify-between">
+                <span>Low Stock Alert at</span>
+                <span className="text-xs text-amber-600 dark:text-amber-400 font-semibold">
+                  {((formData.lowStockThreshold || 5) * (formData.conversionFactor || 1))} {formData.dispensingUnit || 'Strip'}s
+                </span>
+              </label>
               <input type="number" value={formData.lowStockThreshold ?? 5} onChange={e => setFormData({...formData, lowStockThreshold: Number(e.target.value)})} className="w-full px-4 py-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 dark:text-white outline-none focus:border-blue-500" />
             </div>
             {plan === 'premium' && (
@@ -8305,7 +8224,7 @@ const InventoryView = ({
                         <p className="text-[10px] text-slate-400 font-bold">
                           {(m.quantity * m.conversionFactor).toFixed(0)} {m.dispensingUnit || 'Strips'}
                         </p>
-                        <p className="text-[9px] text-blue-500 italic font-medium">1 unit = {m.conversionFactor} {m.dispensingUnit || 'sub'}</p>
+                        <p className="text-[9px] text-blue-500 italic font-medium">1 {m.purchaseUnit || 'pack'} = {m.conversionFactor} {m.dispensingUnit || 'units'}</p>
                       </div>
                     ) : (
                       <p className={`font-bold ${isLowStock ? 'text-red-500' : 'text-slate-700 dark:text-slate-300'}`}>
@@ -8366,6 +8285,12 @@ const StaffManagementView = ({
   const [newStaff, setNewStaff] = useState({ name: '', role: user.role === 'importer' ? 'importer_staff' : 'pharmacist', branchId: '' });
   const [selectedPermissions, setSelectedPermissions] = useState<string[]>(DEFAULT_PERMISSIONS[user.role === 'importer' ? 'importer_staff' : 'pharmacist']);
   const [generatedCreds, setGeneratedCreds] = useState<{username: string, password: string} | null>(null);
+  const [resettingStaff, setResettingStaff] = useState<any | null>(null);
+  const [resetTempPassword, setResetTempPassword] = useState('');
+  const [showResetPassword, setShowResetPassword] = useState(false);
+  const [requirePasswordChange, setRequirePasswordChange] = useState(true);
+  const [isResetting, setIsResetting] = useState(false);
+  const [resetSuccessCreds, setResetSuccessCreds] = useState<{ username: string; password: string; name: string } | null>(null);
 
   const ownerId = user.role === 'staff' ? (user.pharmacyId || user.importerId || user.distributorId) : user.uid;
   const isImporterOwner = user.role === 'importer' || user.role === 'distributor' || (user.role === 'staff' && (user.importerId || user.distributorId));
@@ -8522,6 +8447,30 @@ const StaffManagementView = ({
         verificationStatus: 'approved',
         createdAt: Date.now()
       });
+
+      // Register in staff_lookup directory for instant login resolution
+      try {
+        const key1 = `${pharmacySlug}_${nameSlug}`;
+        const key2 = `${pharmacySlug}_${slugify(username.split('@')[0])}`;
+        const key3 = slugify(username);
+        const key4 = `${pharmacySlug}_${slugify(newStaff.name)}`;
+        const key5 = slugify(email.split('@')[0]);
+        const lookupRecord = {
+          email,
+          username,
+          pharmacySlug,
+          createdAt: Date.now()
+        };
+        await Promise.allSettled([
+          setDoc(doc(db, 'staff_lookup', key1), lookupRecord),
+          setDoc(doc(db, 'staff_lookup', key2), lookupRecord),
+          setDoc(doc(db, 'staff_lookup', key3), lookupRecord),
+          setDoc(doc(db, 'staff_lookup', key4), lookupRecord),
+          setDoc(doc(db, 'staff_lookup', key5), lookupRecord)
+        ]);
+      } catch (dirErr) {
+        console.warn('Initial staff lookup notice:', dirErr);
+      }
       
       setGeneratedCreds({ username, password });
       setIsAdding(false);
@@ -8541,6 +8490,117 @@ const StaffManagementView = ({
     }
   };
 
+  const handleOpenResetModal = (staffMember: any) => {
+    setResettingStaff(staffMember);
+    setResetTempPassword(generatePassword());
+    setShowResetPassword(false);
+    setRequirePasswordChange(true);
+  };
+
+  const handleExecuteResetStaffPassword = async () => {
+    if (!resettingStaff) return;
+    if (resetTempPassword.length < 6) {
+      toast.error('Temporary password must be at least 6 characters long.');
+      return;
+    }
+
+    setIsResetting(true);
+    const resetToast = toast.loading('Resetting staff password and issuing new credentials...');
+
+    try {
+      const slugify = (text: string, sep: string = '') => {
+        const slug = text.toLowerCase().trim().replace(/[^a-z0-9]+/g, sep);
+        if (!sep) return slug;
+        const escapedSep = sep.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        return slug.replace(new RegExp(`^${escapedSep}+|${escapedSep}+$`, 'g'), '');
+      };
+
+      const businessName = user.pharmacyName || user.importerName || user.distributorName || 'business';
+      const pharmacySlug = slugify(businessName);
+      const staffName = resettingStaff.name || resettingStaff.displayName || 'staff';
+      const nameSlug = slugify(staffName, '.');
+      const baseUsername = resettingStaff.username || `${nameSlug}@${pharmacySlug}`;
+      
+      const resetSalt = Date.now();
+      const newAuthEmail = `${nameSlug}.r${resetSalt}.${pharmacySlug}@staff.atech.com`;
+
+      // Use a secondary app instance to create the user without logging out the current manager
+      const firebaseConfig = (await import('../firebase-applet-config.json')).default;
+      const { initializeApp } = await import('firebase/app');
+      const { getAuth, createUserWithEmailAndPassword, signOut: signOutAuth } = await import('firebase/auth');
+
+      const secondaryApp = initializeApp(firebaseConfig, `Reset-${resetSalt}`);
+      const secondaryAuth = getAuth(secondaryApp);
+
+      const result = await createUserWithEmailAndPassword(secondaryAuth, newAuthEmail, resetTempPassword);
+      const newStaffUid = result.user.uid;
+
+      // Sign out secondary instance immediately
+      await signOutAuth(secondaryAuth);
+
+      const previousDocId = resettingStaff.id || resettingStaff.uid;
+      const preservedData = { ...resettingStaff };
+      delete preservedData.id;
+
+      // Create new user profile in Firestore with preserved permissions and branch
+      await setDoc(doc(db, 'users', newStaffUid), {
+        ...preservedData,
+        uid: newStaffUid,
+        email: newAuthEmail,
+        username: baseUsername,
+        mustChangePassword: requirePasswordChange,
+        tempPasswordIssued: true,
+        lastPasswordReset: Date.now(),
+        resetBy: user.email || user.displayName || user.pharmacyName || 'Pharmacy Owner',
+        verificationStatus: 'approved'
+      });
+
+      // Remove the old staff document if it had a different UID
+      if (previousDocId && previousDocId !== newStaffUid) {
+        try {
+          await deleteDoc(doc(db, 'users', previousDocId));
+        } catch (delErr) {
+          console.warn('Old staff document cleanup notice:', delErr);
+        }
+      }
+
+      // Update staff lookup directory for instant login resolution
+      const key1 = `${pharmacySlug}_${slugify(baseUsername.split('@')[0])}`;
+      const key2 = `${pharmacySlug}_${nameSlug}`;
+      const key3 = `${pharmacySlug}_${slugify(staffName)}`;
+      const key4 = slugify(baseUsername);
+      const key5 = slugify(newAuthEmail.split('@')[0]);
+
+      const lookupPayload = {
+        email: newAuthEmail,
+        username: baseUsername,
+        pharmacySlug,
+        updatedAt: Date.now()
+      };
+
+      await Promise.allSettled([
+        setDoc(doc(db, 'staff_lookup', key1), lookupPayload),
+        setDoc(doc(db, 'staff_lookup', key2), lookupPayload),
+        setDoc(doc(db, 'staff_lookup', key3), lookupPayload),
+        setDoc(doc(db, 'staff_lookup', key4), lookupPayload),
+        setDoc(doc(db, 'staff_lookup', key5), lookupPayload)
+      ]);
+
+      setResetSuccessCreds({
+        username: baseUsername,
+        password: resetTempPassword,
+        name: staffName
+      });
+      setResettingStaff(null);
+      toast.success(`Password reset completed for ${staffName}!`, { id: resetToast });
+    } catch (error: any) {
+      console.warn('Password reset notice:', error?.message || error);
+      toast.error(error?.message || 'Failed to reset staff password.', { id: resetToast });
+    } finally {
+      setIsResetting(false);
+    }
+  };
+
   const handleDeleteStaff = async (id: string) => {
     try {
       await deleteDoc(doc(db, 'users', id));
@@ -8555,7 +8615,7 @@ const StaffManagementView = ({
       <div className="flex justify-between items-center mb-8">
         <div>
           <h1 className="text-2xl font-bold text-slate-900 dark:text-white">Staff Management</h1>
-          <p className="text-slate-500 dark:text-slate-400">Manage your pharmacy team and roles. To reset a password, remove and re-add the staff member.</p>
+          <p className="text-slate-500 dark:text-slate-400">Manage your pharmacy team and roles. If a staff member forgets their password, you can securely issue a temporary reset without seeing their old password.</p>
           <div className="mt-2 flex flex-col sm:flex-row sm:items-center gap-2">
             <div className="flex items-center gap-2 text-xs font-medium text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-900/20 px-3 py-1.5 rounded-lg w-fit">
               <Building2 size={14} />
@@ -8749,6 +8809,56 @@ const StaffManagementView = ({
         </motion.div>
       )}
 
+      {resetSuccessCreds && (
+        <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} className="bg-amber-600 dark:bg-amber-700 text-white p-8 rounded-3xl shadow-xl mb-8 relative overflow-hidden">
+          <div className="relative z-10">
+            <div className="flex justify-between items-start mb-3">
+              <div className="flex items-center gap-2">
+                <KeyRound size={22} className="text-amber-200" />
+                <h2 className="text-xl font-bold">Password Reset Completed!</h2>
+              </div>
+              <button onClick={() => setResetSuccessCreds(null)} className="p-1 hover:bg-white/20 rounded-lg transition-colors cursor-pointer"><X size={20} /></button>
+            </div>
+            <p className="text-amber-100 mb-6 text-sm">
+              New temporary credentials have been generated for <strong>{resetSuccessCreds.name}</strong>. Provide these credentials to the staff member. Upon signing in, they will be prompted to set their own permanent private password.
+            </p>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="bg-white/10 backdrop-blur-md p-4 rounded-2xl border border-white/20">
+                <p className="text-[10px] font-bold text-amber-200 uppercase tracking-widest mb-1">Username / Login ID</p>
+                <p className="font-mono font-bold text-lg">{resetSuccessCreds.username}</p>
+              </div>
+              <div className="bg-white/10 backdrop-blur-md p-4 rounded-2xl border border-white/20">
+                <p className="text-[10px] font-bold text-amber-200 uppercase tracking-widest mb-1">New Temporary Password</p>
+                <p className="font-mono font-bold text-lg">{resetSuccessCreds.password}</p>
+              </div>
+            </div>
+            <div className="mt-6 flex flex-wrap gap-3">
+              <button 
+                onClick={() => {
+                  const link = `${window.location.origin}?login=staff&u=${encodeURIComponent(resetSuccessCreds.username)}&ph=${encodeURIComponent(user.pharmacyName || '')}`;
+                  navigator.clipboard.writeText(link);
+                  toast.success('Login link copied to clipboard!');
+                }}
+                className="bg-white text-amber-800 px-6 py-2.5 rounded-xl font-bold hover:bg-amber-50 transition-all flex items-center gap-2 text-sm shadow-sm cursor-pointer"
+              >
+                <ExternalLink size={16} /> Copy Direct Login Link
+              </button>
+              <button 
+                onClick={() => {
+                  const text = `ATECH Staff Credentials (Password Reset)\nPharmacy: ${user.pharmacyName || ''}\nUsername: ${resetSuccessCreds.username}\nNew Temporary Password: ${resetSuccessCreds.password}\nLogin URL: ${window.location.origin}?login=staff&u=${encodeURIComponent(resetSuccessCreds.username)}&ph=${encodeURIComponent(user.pharmacyName || '')}`;
+                  navigator.clipboard.writeText(text);
+                  toast.success('New credentials copied to clipboard!');
+                }}
+                className="bg-amber-800/80 text-white border border-white/30 px-6 py-2.5 rounded-xl font-bold hover:bg-amber-800 transition-all flex items-center gap-2 text-sm cursor-pointer"
+              >
+                <Copy size={16} /> Copy Full Credentials Text
+              </button>
+            </div>
+          </div>
+          <div className="absolute top-0 right-0 -mt-10 -mr-10 w-40 h-40 bg-white/10 rounded-full blur-3xl"></div>
+        </motion.div>
+      )}
+
       <div className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 overflow-hidden shadow-sm">
         <table className="w-full text-left">
           <thead className="bg-slate-50 dark:bg-slate-800 text-slate-500 dark:text-slate-400 text-xs font-bold uppercase tracking-wider">
@@ -8777,35 +8887,49 @@ const StaffManagementView = ({
                   <span className="bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400 text-[10px] font-bold px-2 py-1 rounded-full uppercase">{s.role}</span>
                 </td>
                 <td className="px-8 py-5">
-                  <span className="flex items-center gap-1 text-green-500 text-xs font-bold">
-                    <div className="w-2 h-2 bg-green-500 rounded-full"></div> Active
-                  </span>
+                  <div className="space-y-1">
+                    <span className="flex items-center gap-1 text-green-500 text-xs font-bold">
+                      <div className="w-2 h-2 bg-green-500 rounded-full"></div> Active
+                    </span>
+                    {s.mustChangePassword && (
+                      <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-semibold bg-amber-50 dark:bg-amber-950/30 text-amber-700 dark:text-amber-400 border border-amber-200 dark:border-amber-800/40">
+                        <KeyRound size={10} /> Reset Pending
+                      </span>
+                    )}
+                  </div>
                 </td>
                 <td className="px-8 py-5">
-                  <div className="flex items-center gap-3">
+                  <div className="flex items-center gap-2">
                     <button 
                       onClick={() => handleEditStaff(s)}
-                      className="text-slate-400 dark:text-slate-500 hover:text-blue-600 dark:hover:text-blue-400 transition-colors"
+                      className="text-slate-400 dark:text-slate-500 hover:text-blue-600 dark:hover:text-blue-400 transition-colors p-1.5 rounded-lg hover:bg-blue-50 dark:hover:bg-blue-950/30"
                       title="Edit Permissions"
                     >
-                      <Edit size={18} />
+                      <Edit size={17} />
+                    </button>
+                    <button 
+                      onClick={() => handleOpenResetModal(s)}
+                      className="text-slate-400 dark:text-slate-500 hover:text-amber-500 dark:hover:text-amber-400 transition-colors p-1.5 rounded-lg hover:bg-amber-50 dark:hover:bg-amber-950/30"
+                      title="Reset Staff Password"
+                    >
+                      <KeyRound size={17} />
                     </button>
                     <button 
                       onClick={() => {
                         navigator.clipboard.writeText(s.email);
                         toast.success('Email copied');
                       }}
-                      className="text-slate-400 dark:text-slate-500 hover:text-blue-600 dark:hover:text-blue-400 transition-colors"
+                      className="text-slate-400 dark:text-slate-500 hover:text-blue-600 dark:hover:text-blue-400 transition-colors p-1.5 rounded-lg hover:bg-blue-50 dark:hover:bg-blue-950/30"
                       title="Copy Login Email"
                     >
-                      <Mail size={18} />
+                      <Mail size={17} />
                     </button>
                     <button 
                       onClick={() => handleDeleteStaff(s.id)}
-                      className="text-slate-400 dark:text-slate-500 hover:text-red-500 dark:hover:text-red-400 transition-colors"
+                      className="text-slate-400 dark:text-slate-500 hover:text-red-500 dark:hover:text-red-400 transition-colors p-1.5 rounded-lg hover:bg-red-50 dark:hover:bg-red-950/30"
                       title="Remove Staff"
                     >
-                      <Trash2 size={18} />
+                      <Trash2 size={17} />
                     </button>
                   </div>
                 </td>
@@ -8819,6 +8943,125 @@ const StaffManagementView = ({
           </tbody>
         </table>
       </div>
+
+      {resettingStaff && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-fade-in">
+          <motion.div 
+            initial={{ opacity: 0, scale: 0.95 }} 
+            animate={{ opacity: 1, scale: 1 }} 
+            className="bg-white dark:bg-slate-900 w-full max-w-lg rounded-3xl border border-slate-200 dark:border-slate-800 shadow-2xl p-6 sm:p-8 relative"
+          >
+            <div className="flex items-start justify-between mb-5">
+              <div className="flex items-center gap-3">
+                <div className="w-12 h-12 rounded-2xl bg-amber-50 dark:bg-amber-900/30 border border-amber-200 dark:border-amber-800/50 flex items-center justify-center text-amber-600 dark:text-amber-400 shrink-0">
+                  <KeyRound size={24} />
+                </div>
+                <div>
+                  <h3 className="text-xl font-bold text-slate-900 dark:text-white">Reset Staff Password</h3>
+                  <p className="text-xs text-slate-500 dark:text-slate-400">
+                    {resettingStaff.name} ({resettingStaff.username || resettingStaff.email})
+                  </p>
+                </div>
+              </div>
+              <button 
+                onClick={() => setResettingStaff(null)} 
+                className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 p-1.5 rounded-lg cursor-pointer"
+              >
+                <X size={20} />
+              </button>
+            </div>
+
+            <div className="bg-amber-50/80 dark:bg-amber-950/30 border border-amber-200/60 dark:border-amber-800/40 rounded-2xl p-3.5 mb-5 text-xs text-amber-900 dark:text-amber-300">
+              <div className="flex items-center gap-1.5 font-bold mb-1">
+                <ShieldCheck size={14} className="text-amber-600 dark:text-amber-400" />
+                <span>Privacy & Security Guarantee</span>
+              </div>
+              <p className="text-amber-800/90 dark:text-amber-300/90 leading-relaxed">
+                The staff member's previous password is cryptographically protected and cannot be viewed by anyone. Setting a new temporary password allows them to sign in and immediately configure their own permanent personal password.
+              </p>
+            </div>
+
+            <div className="space-y-4">
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <label className="text-xs font-bold uppercase tracking-wider text-slate-700 dark:text-slate-300">
+                    Temporary Password
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => setResetTempPassword(generatePassword())}
+                    className="text-xs text-blue-600 hover:text-blue-700 dark:text-blue-400 font-semibold flex items-center gap-1 cursor-pointer"
+                  >
+                    <RefreshCw size={12} /> Regenerate
+                  </button>
+                </div>
+                <div className="relative">
+                  <input
+                    type={showResetPassword ? 'text' : 'password'}
+                    value={resetTempPassword}
+                    onChange={(e) => setResetTempPassword(e.target.value)}
+                    className="w-full px-4 py-3 pr-10 rounded-xl border border-slate-200 dark:border-slate-700 font-mono text-sm dark:bg-slate-800 dark:text-white outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/10"
+                    placeholder="Enter or generate temporary password"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowResetPassword(!showResetPassword)}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 p-1"
+                  >
+                    {showResetPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+                  </button>
+                </div>
+              </div>
+
+              <label className="flex items-start gap-2.5 p-3.5 rounded-xl bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={requirePasswordChange}
+                  onChange={(e) => setRequirePasswordChange(e.target.checked)}
+                  className="mt-0.5 rounded text-blue-600 focus:ring-blue-500 cursor-pointer"
+                />
+                <div className="text-xs">
+                  <p className="font-bold text-slate-800 dark:text-slate-200">
+                    Require staff member to change password on next login
+                  </p>
+                  <p className="text-slate-500 dark:text-slate-400 mt-0.5">
+                    Ensures the staff member sets their own private password right after signing in with this temporary password.
+                  </p>
+                </div>
+              </label>
+            </div>
+
+            <div className="mt-6 flex justify-end gap-3">
+              <button
+                type="button"
+                onClick={() => setResettingStaff(null)}
+                disabled={isResetting}
+                className="px-5 py-2.5 text-slate-600 dark:text-slate-400 font-bold hover:bg-slate-100 dark:hover:bg-slate-800 rounded-xl text-sm transition-colors cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleExecuteResetStaffPassword}
+                disabled={isResetting || resetTempPassword.length < 6}
+                className="bg-amber-600 hover:bg-amber-700 disabled:opacity-50 text-white px-6 py-2.5 rounded-xl font-bold text-sm transition-all shadow-lg shadow-amber-600/20 flex items-center gap-2 cursor-pointer"
+              >
+                {isResetting ? (
+                  <>
+                    <RefreshCw size={16} className="animate-spin" />
+                    Applying Reset...
+                  </>
+                ) : (
+                  <>
+                    <KeyRound size={16} />
+                    Issue Temporary Password
+                  </>
+                )}
+              </button>
+            </div>
+          </motion.div>
+        </div>
+      )}
     </div>
   );
 };
@@ -12327,7 +12570,9 @@ export default function App() {
     }
   }, [profile, activeTab]);
   const [systemSettings, setSystemSettings] = useState<SystemSettings | null>(null);
-  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(true);
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(() => {
+    return typeof window !== 'undefined' ? window.innerWidth < 1024 : false;
+  });
 
   // --- BRANCHES MANAGEMENT STATE ---
   const [branches, setBranches] = useState<Branch[]>([]);
@@ -12475,14 +12720,20 @@ export default function App() {
   }, [syncStatus, offlineQueue.length]);
 
   useEffect(() => {
+    if (typeof window === 'undefined') return;
+    let lastWidth = window.innerWidth;
     const handleResize = () => {
-      if (window.innerWidth < 1024) {
-        setIsSidebarCollapsed(true);
-      } else {
-        setIsSidebarCollapsed(false);
+      const currentWidth = window.innerWidth;
+      // Only toggle collapsed state if width changes substantially and actually crossed the 1024px desktop breakpoint
+      if (Math.abs(currentWidth - lastWidth) > 30) {
+        if (lastWidth >= 1024 && currentWidth < 1024) {
+          setIsSidebarCollapsed(true);
+        } else if (lastWidth < 1024 && currentWidth >= 1024) {
+          setIsSidebarCollapsed(false);
+        }
+        lastWidth = currentWidth;
       }
     };
-    handleResize();
     window.addEventListener('resize', handleResize);
     return () => window.removeEventListener('resize', handleResize);
   }, []);
@@ -12550,18 +12801,6 @@ export default function App() {
   };
 
   useEffect(() => {
-    // Connection test status
-    const testConnection = async () => {
-      try {
-        await getDocFromServer(doc(db, 'test', 'connection'));
-      } catch (error) {
-        if (error instanceof Error && error.message.includes('the client is offline')) {
-          console.log("Firebase connection state: offline mode active.");
-        }
-      }
-    };
-    testConnection();
-
     const handleTabChange = (e: any) => {
       if (e.detail) setActiveTab(e.detail);
     };
@@ -13154,7 +13393,7 @@ export default function App() {
         )}
       </AnimatePresence>
 
-      <div className="flex min-h-screen bg-slate-50 dark:bg-slate-950 font-sans text-slate-900 dark:text-slate-100 transition-colors duration-300">
+      <div className="flex h-screen w-full overflow-hidden bg-slate-50 dark:bg-slate-950 font-sans text-slate-900 dark:text-slate-100 transition-colors duration-300">
         <Sidebar 
           activeTab={activeTab} 
           setActiveTab={setActiveTab} 
@@ -13168,8 +13407,8 @@ export default function App() {
           language={language}
           changeLanguage={changeLanguage}
         />
-        <main className="flex-1 overflow-y-auto h-screen bg-slate-50 dark:bg-slate-950 transition-colors duration-300 relative w-full lg:w-auto">
-          <header className={`sticky top-0 z-30 flex h-16 w-full items-center justify-between border-b border-slate-200 bg-white/80 px-4 sm:px-8 backdrop-blur-md transition-all dark:border-slate-800 dark:bg-slate-950/80`}>
+        <main className="flex-1 h-full overflow-y-auto overflow-x-hidden min-w-0 bg-slate-50 dark:bg-slate-950 transition-colors duration-300 relative w-full flex flex-col">
+          <header className={`sticky top-0 z-30 flex h-16 w-full shrink-0 items-center justify-between border-b border-slate-200 bg-white/80 px-4 sm:px-8 backdrop-blur-md transition-all dark:border-slate-800 dark:bg-slate-950/80`}>
             <div className="flex items-center gap-4">
               {isSidebarCollapsed && (
                 <button 
@@ -13431,43 +13670,7 @@ export default function App() {
                           </div>
                         )}
                         
-                        <div className="pt-6 border-t border-slate-100 dark:border-slate-800">
-                          <h3 className="text-lg font-bold mb-4 dark:text-white">Change Password</h3>
-                          <div className="space-y-4">
-                            <div className="space-y-2">
-                              <label className="text-sm font-bold text-slate-700 dark:text-slate-300">New Password</label>
-                              <input id="new-password" type="password" className="w-full px-4 py-2 rounded-lg border border-slate-200 dark:border-slate-700 outline-none focus:border-blue-500 dark:bg-slate-800 dark:text-white" />
-                            </div>
-                            <button 
-                              onClick={async () => {
-                                const newPass = (document.getElementById('new-password') as HTMLInputElement).value;
-                                if (newPass.length < 6) {
-                                  toast.error('Password must be at least 6 characters');
-                                  return;
-                                }
-                                if (!auth.currentUser) {
-                                  toast.error('Active session not found. Please log in again.');
-                                  return;
-                                }
-                                try {
-                                  await updatePassword(auth.currentUser, newPass);
-                                  toast.success('Password updated successfully in Firebase Authentication!');
-                                  (document.getElementById('new-password') as HTMLInputElement).value = '';
-                                } catch (error: any) {
-                                  console.error('Password update error:', error);
-                                  if (error?.code === 'auth/requires-recent-login') {
-                                    toast.error('For security reasons, please log out and log back in before changing your password.');
-                                  } else {
-                                    toast.error(error?.message || 'Failed to update password');
-                                  }
-                                }
-                              }}
-                              className="bg-blue-600 text-white px-6 py-2 rounded-lg font-bold hover:bg-blue-700 transition-colors shadow-lg shadow-blue-100 dark:shadow-none"
-                            >
-                              Update Password
-                            </button>
-                          </div>
-                        </div>
+                        <ChangePasswordCard currentUser={auth.currentUser} />
 
                         {/* Future-ready Finance and Serial Hardware Sandbox Widget */}
                         <div className="pt-6 border-t border-slate-100 dark:border-slate-800">
@@ -13581,6 +13784,15 @@ export default function App() {
             </div>
           </div>
         </div>
+      )}
+
+      {profile && profile.role === 'staff' && profile.mustChangePassword && (
+        <MustChangePasswordModal
+          profile={profile}
+          onSuccess={() => {
+            setProfile((prev) => prev ? { ...prev, mustChangePassword: false, tempPasswordIssued: false } : prev);
+          }}
+        />
       )}
     </ErrorBoundary>
   );

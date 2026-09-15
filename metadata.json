@@ -1,6 +1,6 @@
 {
   "name": "ATECH East Africa",
   "description": "A multi-user SaaS platform for pharmacies and importers with inventory management, sales tracking, and B2B marketplace.",
-  "requestFramePermissions": ["geolocation"],
+  "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

@@ -15,6 +15,14 @@ export interface UserProfile {
   pharmacyName?: string;
   importerName?: string;
   distributorName?: string;
+  ownerName?: string;
+  name?: string;
+  phone?: string;
+  licenseNumber?: string;
+  shift?: string;
+  branchCount?: number;
+  salary?: number;
+  commissionRate?: number;
   subscriptionType?: 'basic' | 'standard' | 'premium';
   subscriptionStatus?: 'active' | 'expired' | 'past_due';
   subscriptionExpiryDate?: number;
@@ -49,6 +57,11 @@ export interface UserProfile {
   theme?: 'light' | 'dark';
   invitedWholesalerId?: string;
   invitedCustomerId?: string;
+  mustChangePassword?: boolean;
+  tempPasswordIssued?: boolean;
+  lastPasswordReset?: number;
+  resetBy?: string;
+  passwordChangedAt?: number;
   createdAt: number;
   deliverySettings?: {
     isFreeDelivery: boolean;
