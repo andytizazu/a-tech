@@ -86,6 +86,28 @@ const COMMON_CHRONIC_CONDITIONS = [
 ];
 
 const CustomersView = ({ user, addToOfflineQueue, syncStatus }: CustomersViewProps) => {
+  const isBasic = (user.role === 'pharmacy' || user.role === 'staff') && 
+    (user.subscriptionType === 'basic' || !user.subscriptionType);
+
+  if (isBasic) {
+    return (
+      <div className="p-8 max-w-2xl mx-auto text-center" id="customers-basic-lock">
+        <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-8 rounded-3xl shadow-sm">
+          <div className="w-14 h-14 bg-amber-50 dark:bg-amber-950/40 text-amber-600 dark:text-amber-400 rounded-2xl flex items-center justify-center mx-auto mb-4">
+            <Users size={28} />
+          </div>
+          <h2 className="text-xl font-black text-slate-900 dark:text-white mb-2">Professional (Standard) Required</h2>
+          <p className="text-sm text-slate-500 dark:text-slate-400 mb-4 leading-relaxed">
+            Customer and Patient Management is an advanced feature included in the Professional and Premium plans. The Basic subscription is configured specifically for core pharmacy operations: inventory, stock receiving, dispensing/POS, and wholesales.
+          </p>
+          <p className="text-xs font-semibold text-slate-400">
+            Please upgrade your subscription to access clinical patient records, prescription tracking, and customer loyalty discounts.
+          </p>
+        </div>
+      </div>
+    );
+  }
+
   const [customers, setCustomers] = useState<PharmacyCustomer[]>([]);
   const [sales, setSales] = useState<Sale[]>([]);
   const [loading, setLoading] = useState(true);

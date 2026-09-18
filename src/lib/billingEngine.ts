@@ -13,6 +13,7 @@ import { UserProfile, SystemSettings, SaaSInvoice } from '../types';
 
 // Hardcoded fallback base prices matching PLAN_PRICES in App.tsx
 export const PLAN_PRICES = {
+  basic: 500,
   standard: 1200,
   premium: 3000
 };
@@ -73,10 +74,14 @@ export const getSubscriptionCost = (
   }
 
   const country = profile.country || 'Ethiopia';
-  const rawPlan = (profile.subscriptionType || 'standard') as string;
+  const rawPlan = (profile.subscriptionType || 'basic') as string;
   const rawPlanLower = rawPlan.toLowerCase();
-  const plan: 'standard' | 'premium' = 
-    rawPlanLower.includes('premium') || rawPlanLower.includes('enterprise') ? 'premium' : 'standard';
+  const plan: 'basic' | 'standard' | 'premium' = 
+    rawPlanLower.includes('premium') || rawPlanLower.includes('enterprise')
+      ? 'premium'
+      : rawPlanLower.includes('standard') || rawPlanLower.includes('professional')
+      ? 'standard'
+      : 'basic';
   
   // 1. Resolve Pricing Config & Overrides (Prioritizes Admin System Settings planPrices)
   let basePrice = 0;

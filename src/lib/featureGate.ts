@@ -10,8 +10,9 @@ export interface FeatureDefinition {
 export const FEATURES_LIST: FeatureDefinition[] = [
   // Core Tabs
   { id: 'dashboard', name: 'Dashboard Analytics', category: 'core', description: 'Interactive overview of sales, inventory counts, and branch overview.' },
-  { id: 'inventory', name: 'Inventory Management', category: 'core', description: 'Standard product catalog, batch records, units of purchase & conversion.' },
-  { id: 'sales', name: 'Sales & POS Screen', category: 'core', description: 'Point of sale, checkouts, receipt printing, and daily cashier lists.' },
+  { id: 'inventory', name: 'Stock Management', category: 'core', description: 'Standard product catalog, batch records, stock quantity intake, and units.' },
+  { id: 'sales', name: 'Dispense (POS)', category: 'core', description: 'Point of sale, patient dispensing, checkouts, receipt printing, and daily cashier lists.' },
+  { id: 'sales-history', name: 'Sales History (Sold Today)', category: 'core', description: 'Detailed ledger of medicines sold today, this week, this month, or custom period.' },
   { id: 'customers', name: 'Customer Accounts', category: 'core', description: 'Patient records, basic contact information, and customer lists.' },
   { id: 'bincard', name: 'Bin Card Reports', category: 'core', description: 'In-depth audit history of specific stock bin card ledger transactions.' },
   { id: 'expiry', name: 'Expiry Tracking', category: 'core', description: 'Automated monitoring of approaching expiration dates across inventory.' },
@@ -47,16 +48,29 @@ export const FEATURES_LIST: FeatureDefinition[] = [
   { id: 'enterprise_audit_center', name: 'Global Enterprise Audit Control', category: 'enterprise', description: 'Central governance dashboard for high-volume corporate administrative oversight.' }
 ];
 
-export const DEFAULT_PLAN_FEATURES: Record<'standard' | 'premium', string[]> = {
+export const DEFAULT_PLAN_FEATURES: Record<'basic' | 'standard' | 'premium', string[]> = {
+  basic: [
+    'dashboard', 
+    'inventory', 
+    'sales', 
+    'sales-history',
+    'suppliers', 
+    'bincard', 
+    'reports',
+    'expenses',
+    'notifications', 
+    'settings', 
+    'subscription'
+  ],
   standard: [
-    'dashboard', 'inventory', 'sales', 'customers', 'bincard', 'expiry', 'forecasting', 
+    'dashboard', 'inventory', 'sales', 'sales-history', 'customers', 'bincard', 'expiry', 'forecasting', 
     'procurement', 'subscription', 'notifications', 'settings',
     'staff', 'branches', 'warehouses', 'marketplace', 'orders', 'suppliers',
     'branch_creation_deletion', 'customer_discounts', 'batch_aware_pos', 'fefo_recommendations', 
     'audit_logs', 'advanced_inventory_reports'
   ],
   premium: [
-    'dashboard', 'inventory', 'sales', 'customers', 'bincard', 'expiry', 'forecasting', 
+    'dashboard', 'inventory', 'sales', 'sales-history', 'customers', 'bincard', 'expiry', 'forecasting', 
     'procurement', 'subscription', 'notifications', 'settings',
     'staff', 'branches', 'warehouses', 'marketplace', 'orders',
     'suppliers',
@@ -101,12 +115,26 @@ export const hasFeature = (
   }
 
   // Get current pharmacy/staff plan
-  const rawPlan = (profile.subscriptionType || 'standard') as string;
+  const rawPlan = (profile.subscriptionType || 'basic') as string;
   const rawPlanLower = rawPlan.toLowerCase();
-  const plan: 'standard' | 'premium' = 
-    rawPlanLower.includes('premium') || rawPlanLower.includes('enterprise') ? 'premium' : 'standard';
+  const plan: 'basic' | 'standard' | 'premium' = 
+    rawPlanLower.includes('premium') || rawPlanLower.includes('enterprise') 
+      ? 'premium' 
+      : rawPlanLower.includes('standard') || rawPlanLower.includes('professional')
+      ? 'standard'
+      : 'basic';
 
-  // Baseline standard features for this plan tier
+  // Strict restriction for Basic subscription: Customers and customer discounts are disallowed
+  if (plan === 'basic') {
+    if (featureId === 'customers' || featureId === 'customer_discounts' || featureId === 'branches' || featureId === 'warehouses' || featureId === 'procurement' || featureId === 'marketplace' || featureId === 'orders' || featureId === 'staff' || featureId === 'forecasting' || featureId === 'expiry') {
+      return false;
+    }
+    const basicFeatures = DEFAULT_PLAN_FEATURES.basic;
+    // Allow if in basic features list
+    return basicFeatures.includes(featureId);
+  }
+
+  // Baseline features for standard / premium tiers
   const baselineFeatures = DEFAULT_PLAN_FEATURES[plan] || DEFAULT_PLAN_FEATURES.standard;
 
   // Try to load any customization from system settings
@@ -133,10 +161,11 @@ export const hasFeature = (
  * Gets user-friendly upgrade path text
  */
 export const getUpgradeRequirementLabel = (featureId: string): string => {
-  for (const planId of ['standard', 'premium'] as const) {
-    if (DEFAULT_PLAN_FEATURES[planId].includes(featureId)) {
-      return planId === 'standard' ? 'Professional (Standard)' : 'Premium';
-    }
+  if (DEFAULT_PLAN_FEATURES.basic.includes(featureId)) {
+    return 'Basic';
+  }
+  if (DEFAULT_PLAN_FEATURES.standard.includes(featureId)) {
+    return 'Professional (Standard)';
   }
   return 'Premium';
 };

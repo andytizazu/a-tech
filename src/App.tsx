@@ -104,9 +104,12 @@ import {
   TrendingDown,
   Sparkles,
   Pill,
-  Receipt
+  Receipt,
+  PackagePlus,
+  History
 } from 'lucide-react';
 
+import { SalesHistoryView } from './components/SalesHistoryView';
 import { WholesaleAdsPortal } from './components/WholesaleAdsPortal';
 import { AdminAdsCenter } from './components/AdminAdsCenter';
 import { AdminRatingsManagement, calculateSystemWork } from './components/AdminRatingsManagement';
@@ -188,9 +191,10 @@ export const LANGUAGES = [
 export const TRANSLATIONS = {
   en: {
     dashboard: 'Dashboard',
-    inventory: 'Inventory',
-    'my-products': 'My Products',
-    sales: 'Sales & POS',
+    inventory: 'Stock',
+    'my-products': 'Inventory',
+    sales: 'Dispense',
+    'sales-history': 'Sales History',
     marketplace: 'Marketplace',
     orders: 'B2B Orders',
     suppliers: 'Wholesale Pharmacies',
@@ -232,9 +236,10 @@ export const TRANSLATIONS = {
   },
   am: {
     dashboard: 'ዳሽቦርድ',
-    inventory: 'ክምችት (ኢንቬንቶሪ)',
-    'my-products': 'የምርት ዝርዝር',
-    sales: 'ሽያጭ እና POS',
+    inventory: 'ክምችት (Stock)',
+    'my-products': 'ክምችት (Inventory)',
+    sales: 'መድሃኒት መስጠት (Dispense)',
+    'sales-history': 'የሽያጭ ታሪክ (የተሸጡ)',
     marketplace: 'የገበያ ቦታ',
     orders: 'የጅምላ ትዕዛዞች (B2B)',
     suppliers: 'የጅምላ መድኃኒት ቤቶች',
@@ -274,9 +279,10 @@ export const TRANSLATIONS = {
   },
   om: {
     dashboard: 'Dursaa (Dashboard)',
-    inventory: 'Kuusaa Qorichaa',
-    'my-products': 'Oomishaalee Koo',
-    sales: 'Gurgurtaa & POS',
+    inventory: 'Kuusaa (Stock)',
+    'my-products': 'Kuusaa (Inventory)',
+    sales: 'Qoricha Kennuu (Dispense)',
+    'sales-history': 'Seenaa Gurgurtaa (Sold)',
     marketplace: 'Gabaa Meeshaalee',
     orders: 'Ajajawwan B2B',
     suppliers: 'Dhiyeessitoota Jimlaa',
@@ -315,9 +321,10 @@ export const TRANSLATIONS = {
   },
   ti: {
     dashboard: 'ዳሽቦርድ',
-    inventory: 'ክምችት (ኢንቬንቶሪ)',
-    'my-products': 'ፍርያተይ',
-    sales: 'ሽያጭን POSን',
+    inventory: 'ክምችት (Stock)',
+    'my-products': 'ክምችት (Inventory)',
+    sales: 'ምዕዳል መድሃኒት (Dispense)',
+    'sales-history': 'ናይ መሸጣ ታሪኽ (ዝተሸጠ)',
     marketplace: 'ቦታ ዕዳጋ',
     orders: 'ጅምላ ትእዛዛት (B2B)',
     suppliers: 'ጅምላ መድኃኒት መቕረብቲ',
@@ -2739,6 +2746,7 @@ const AdminVerificationView = () => {
 };
 
 const PLAN_PRICES = {
+  basic: 500,
   standard: 1200,
   premium: 3000
 };
@@ -4539,7 +4547,7 @@ const OrdersView = ({ user }: { user: UserProfile }) => {
             <p className="text-slate-500 dark:text-slate-400 max-w-md mx-auto mb-6">
               {(user.role === 'pharmacy' || user.role === 'staff')
                 ? "You haven't placed any bulk orders from importers yet. Visit the Marketplace to find supplies for your pharmacy."
-                : "You haven't received any orders from pharmacies yet. Make sure your products are listed in 'My Products' with competitive prices."}
+                : "You haven't received any orders from pharmacies yet. Make sure your products are listed in 'Inventory' with competitive prices."}
             </p>
             {(user.role === 'pharmacy' || user.role === 'staff') && (
               <button 
@@ -6276,8 +6284,8 @@ const RegionalManagerDashboard = ({ user }: { user: UserProfile }) => {
 };
 
 const DEFAULT_PERMISSIONS: Record<string, string[]> = {
-  pharmacist: ['dashboard', 'inventory', 'sales', 'marketplace', 'orders', 'customers', 'suppliers', 'settings'],
-  cashier: ['dashboard', 'sales', 'settings'],
+  pharmacist: ['dashboard', 'inventory', 'sales', 'sales-history', 'marketplace', 'orders', 'customers', 'suppliers', 'settings'],
+  cashier: ['dashboard', 'sales', 'sales-history', 'settings'],
   inventory: ['dashboard', 'inventory', 'marketplace', 'orders', 'suppliers', 'settings'],
   importer_staff: ['dashboard', 'my-products', 'orders', 'settings'],
   warehouse_manager: ['dashboard', 'warehouses', 'settings'],
@@ -6316,12 +6324,13 @@ const Sidebar = ({
   const menuItems = [
     { id: 'dashboard', label: t('dashboard'), icon: LayoutDashboard, roles: ['admin', 'pharmacy', 'importer', 'regional_manager', 'staff', 'marketing', 'distributor'] },
     { id: 'inventory', label: t('inventory'), icon: Package, roles: ['pharmacy', 'staff'] },
-    { id: 'bincard', label: t('bincard'), icon: FileText, roles: ['pharmacy', 'staff'], minPlan: 'standard' },
+    { id: 'sales', label: t('sales'), icon: ShoppingCart, roles: ['pharmacy', 'staff'] },
+    { id: 'sales-history', label: t('sales-history') || 'Sales History', icon: History, roles: ['pharmacy', 'staff'], minPlan: 'basic' },
+    { id: 'bincard', label: t('bincard'), icon: FileText, roles: ['pharmacy', 'staff'], minPlan: 'basic' },
     { id: 'expiry', label: t('expiry'), icon: Clock, roles: ['pharmacy', 'staff'], minPlan: 'standard' },
     { id: 'forecasting', label: t('forecasting'), icon: TrendingUp, roles: ['pharmacy', 'staff'], minPlan: 'standard' },
-    { id: 'my-products', label: (role === 'importer' || role === 'distributor') ? 'Products' : t('my-products'), icon: Box, roles: ['importer', 'distributor', 'staff'] },
-    { id: 'sales', label: t('sales'), icon: ShoppingCart, roles: ['pharmacy', 'staff'] },
-    { id: 'customers', label: (role === 'importer' || role === 'distributor') ? 'Customers' : t('customers'), icon: Users, roles: ['pharmacy', 'staff'] },
+    { id: 'my-products', label: (role === 'importer' || role === 'distributor') ? 'Inventory' : t('my-products'), icon: Package, roles: ['importer', 'distributor', 'staff'] },
+    { id: 'customers', label: (role === 'importer' || role === 'distributor') ? 'Customers' : t('customers'), icon: Users, roles: ['pharmacy', 'staff'], minPlan: 'standard' },
     { id: 'suppliers', label: 'Wholesales', icon: Building2, roles: ['pharmacy', 'staff'] },
     { id: 'analytics', label: 'Analytics Insights', icon: TrendingUp, roles: ['importer', 'distributor'] },
     { id: 'product-demand', label: 'Demand & Importer Intel', icon: Sparkles, roles: ['importer', 'distributor'] },
@@ -7727,21 +7736,49 @@ const InventoryView = ({
   addToOfflineQueue, 
   syncStatus,
   selectedBranchId = 'all',
-  branches = []
+  branches = [],
+  warehouses = [],
+  onNavigateToDispense
 }: { 
   user: UserProfile, 
   addToOfflineQueue?: (item: any) => void, 
   syncStatus?: string,
   selectedBranchId?: string,
-  branches?: Branch[]
+  branches?: Branch[],
+  warehouses?: any[],
+  onNavigateToDispense?: () => void
 }) => {
   const [products, setProducts] = useState<InventoryProduct[]>([]);
   const [isAdding, setIsAdding] = useState(false);
+  const [isReceivingStock, setIsReceivingStock] = useState(false);
   const [editingProduct, setEditingProduct] = useState<InventoryProduct | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [formData, setFormData] = useState<Partial<InventoryProduct>>({
-    name: '', category: 'Medicine', price: 0, costPrice: 0, quantity: 0, batchNumber: '', expiryDate: '', lowStockThreshold: 5, supplier: '', branchId: '',
-    genericName: '', countryOfOrigin: '', purchaseUnit: 'Box', dispensingUnit: 'Strip', conversionFactor: 10
+    name: '', category: 'Medicine', price: 0, costPrice: 0, quantity: 0, shelfQuantity: 0, warehouseQuantity: 0, warehouseId: '', warehouseName: '', batchNumber: '', expiryDate: '', lowStockThreshold: 5, supplier: '', branchId: '',
+    genericName: '', countryOfOrigin: '', purchaseUnit: 'Pack', dispensingUnit: 'Unit', conversionFactor: 1
+  });
+  const [receiveForm, setReceiveForm] = useState<{
+    productId: string;
+    shelfQuantityReceived: number;
+    warehouseQuantityReceived: number;
+    quantityReceived: number;
+    warehouseId: string;
+    batchNumber: string;
+    expiryDate: string;
+    costPrice: number;
+    price: number;
+    supplier: string;
+  }>({
+    productId: '',
+    shelfQuantityReceived: 1,
+    warehouseQuantityReceived: 0,
+    quantityReceived: 1,
+    warehouseId: '',
+    batchNumber: '',
+    expiryDate: '',
+    costPrice: 0,
+    price: 0,
+    supplier: ''
   });
 
   const ownerId = user.role === 'staff' ? user.pharmacyId : user.uid;
@@ -7777,7 +7814,13 @@ const InventoryView = ({
   });
 
   const handleAddProduct = async () => {
-    if (formData.quantity < 0) {
+    const shelfQty = Number(formData.shelfQuantity || 0);
+    const whQty = Number(formData.warehouseQuantity || 0);
+    const totalQty = (formData.shelfQuantity !== undefined || formData.warehouseQuantity !== undefined)
+      ? (shelfQty + whQty)
+      : Number(formData.quantity || 0);
+
+    if (totalQty < 0) {
       toast.error('Quantity cannot be negative');
       return;
     }
@@ -7786,10 +7829,20 @@ const InventoryView = ({
       return;
     }
 
+    const resolvedShelfQty = (formData.shelfQuantity !== undefined || formData.warehouseQuantity !== undefined) ? shelfQty : totalQty;
+    const resolvedWhQty = (formData.shelfQuantity !== undefined || formData.warehouseQuantity !== undefined) ? whQty : 0;
+    const targetWH = warehouses.find(w => w.id === formData.warehouseId);
+    const whName = targetWH ? targetWH.name : (resolvedWhQty > 0 ? 'Main Warehouse' : '');
+
     const productId = `prod_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
     const targetBranchId = formData.branchId || (selectedBranchId === 'all' ? `main_branch_${ownerId}` : selectedBranchId);
-    const newProduct = {
+    const newProduct: InventoryProduct = {
       ...formData,
+      quantity: totalQty,
+      shelfQuantity: resolvedShelfQty,
+      warehouseQuantity: resolvedWhQty,
+      warehouseId: formData.warehouseId || '',
+      warehouseName: whName,
       branchId: targetBranchId,
       id: productId,
       pharmacyId: ownerId,
@@ -7807,6 +7860,29 @@ const InventoryView = ({
       }
       await setDoc(doc(db, 'medicines', productId), newProduct);
 
+      // Log warehouse transaction if warehouse portion > 0
+      if (resolvedWhQty > 0) {
+        const txId = `tx_${Date.now()}`;
+        const txData = {
+          id: txId,
+          pharmacyId: ownerId,
+          type: 'receiving',
+          productId: productId,
+          productName: newProduct.name,
+          quantity: resolvedWhQty,
+          batchNumber: newProduct.batchNumber || '',
+          expiryDate: newProduct.expiryDate || '',
+          sourceId: newProduct.supplier || 'Direct Intake',
+          sourceName: newProduct.supplier || 'Supplier Intake',
+          destinationId: formData.warehouseId || 'main',
+          destinationName: whName || 'Main Warehouse',
+          notes: `Initial stock intake: ${resolvedShelfQty} on shelf, ${resolvedWhQty} in warehouse`,
+          createdBy: user.displayName || user.email || 'Staff',
+          createdAt: Date.now()
+        };
+        await setDoc(doc(db, 'warehouse_transactions', txId), txData).catch(err => console.warn(err));
+      }
+
       // Log to Bin Card Ledger
       const currentBranchName = branches.find(b => b.id === targetBranchId)?.name || 'Main Branch (HQ)';
       const userRefName = user.displayName || user.email || 'Staff';
@@ -7819,24 +7895,24 @@ const InventoryView = ({
         genericName: newProduct.genericName || '',
         transactionType: 'Purchase',
         referenceNumber: newProduct.batchNumber || 'INVENTORY-GEN',
-        quantityIn: newProduct.quantity * factorOfConv, // Record in dispensing units
+        quantityIn: newProduct.quantity, // Direct stock units
         quantityOut: 0,
-        balance: newProduct.quantity * factorOfConv, // dispensing units balance
+        balance: newProduct.quantity, // Direct stock balance
         user: userRefName,
         branch: currentBranchName,
         product: newProduct.name,
         countryOfOrigin: newProduct.countryOfOrigin || '',
-        purchaseUnit: newProduct.purchaseUnit || '',
-        dispensingUnit: newProduct.dispensingUnit || '',
+        purchaseUnit: newProduct.purchaseUnit || 'Pack',
+        dispensingUnit: newProduct.dispensingUnit || 'Unit',
         conversionFactor: factorOfConv
       });
 
       setIsAdding(false);
       setFormData({ 
-        name: '', category: 'Medicine', price: 0, costPrice: 0, quantity: 0, batchNumber: '', expiryDate: '', lowStockThreshold: 5, supplier: '', branchId: '',
-        genericName: '', countryOfOrigin: '', purchaseUnit: 'Box', dispensingUnit: 'Strip', conversionFactor: 10
+        name: '', category: 'Medicine', price: 0, costPrice: 0, quantity: 0, shelfQuantity: 0, warehouseQuantity: 0, warehouseId: '', warehouseName: '', batchNumber: '', expiryDate: '', lowStockThreshold: 5, supplier: '', branchId: '',
+        genericName: '', countryOfOrigin: '', purchaseUnit: 'Pack', dispensingUnit: 'Unit', conversionFactor: 1
       });
-      toast.success(navigator.onLine ? 'Product added to inventory and logged to Bin Card' : 'Product added offline successfully!');
+      toast.success(navigator.onLine ? 'Inventory added with separate shelf and warehouse stock' : 'Inventory added offline successfully!');
     } catch (error) {
       handleFirestoreError(error, OperationType.CREATE, 'medicines');
     }
@@ -7844,13 +7920,25 @@ const InventoryView = ({
 
   const handleUpdateProduct = async () => {
     if (!editingProduct) return;
-    if (formData.quantity < 0) {
+    const shelfQty = Number(formData.shelfQuantity ?? (editingProduct.shelfQuantity ?? editingProduct.quantity));
+    const whQty = Number(formData.warehouseQuantity ?? (editingProduct.warehouseQuantity ?? 0));
+    const totalQty = shelfQty + whQty;
+
+    if (totalQty < 0) {
       toast.error('Inventory cannot go lower than zero');
       return;
     }
 
-    const updatedFields = {
+    const targetWH = warehouses.find(w => w.id === formData.warehouseId);
+    const whName = targetWH ? targetWH.name : (formData.warehouseName || editingProduct.warehouseName || (whQty > 0 ? 'Main Warehouse' : ''));
+
+    const updatedFields: Partial<InventoryProduct> = {
       ...formData,
+      quantity: totalQty,
+      shelfQuantity: shelfQty,
+      warehouseQuantity: whQty,
+      warehouseId: formData.warehouseId || editingProduct.warehouseId || '',
+      warehouseName: whName,
       updatedAt: Date.now()
     };
 
@@ -7868,7 +7956,7 @@ const InventoryView = ({
 
       // Save movement log if quantity or units changed
       const oldQty = editingProduct.quantity || 0;
-      const newQty = formData.quantity || 0;
+      const newQty = totalQty;
       const diffQty = newQty - oldQty;
 
       if (diffQty !== 0) {
@@ -7885,25 +7973,25 @@ const InventoryView = ({
           genericName: updatedFields.genericName || editingProduct.genericName || '',
           transactionType: 'Adjustment',
           referenceNumber: updatedFields.batchNumber || editingProduct.batchNumber || 'ADJUST',
-          quantityIn: diffQty > 0 ? (diffQty * factorOfConv) : 0,
-          quantityOut: diffQty < 0 ? (Math.abs(diffQty) * factorOfConv) : 0,
-          balance: newQty * factorOfConv,
+          quantityIn: diffQty > 0 ? diffQty : 0,
+          quantityOut: diffQty < 0 ? Math.abs(diffQty) : 0,
+          balance: newQty,
           user: userRefName,
           branch: currentBranchName,
           product: updatedFields.name || editingProduct.name,
           countryOfOrigin: updatedFields.countryOfOrigin || editingProduct.countryOfOrigin || '',
-          purchaseUnit: updatedFields.purchaseUnit || editingProduct.purchaseUnit || '',
-          dispensingUnit: updatedFields.dispensingUnit || editingProduct.dispensingUnit || '',
+          purchaseUnit: updatedFields.purchaseUnit || editingProduct.purchaseUnit || 'Pack',
+          dispensingUnit: updatedFields.dispensingUnit || editingProduct.dispensingUnit || 'Unit',
           conversionFactor: factorOfConv
         });
       }
 
       setEditingProduct(null);
       setFormData({ 
-        name: '', category: 'Medicine', price: 0, costPrice: 0, quantity: 0, batchNumber: '', expiryDate: '', lowStockThreshold: 5, supplier: '', branchId: '',
-        genericName: '', countryOfOrigin: '', purchaseUnit: 'Box', dispensingUnit: 'Strip', conversionFactor: 10
+        name: '', category: 'Medicine', price: 0, costPrice: 0, quantity: 0, shelfQuantity: 0, warehouseQuantity: 0, warehouseId: '', warehouseName: '', batchNumber: '', expiryDate: '', lowStockThreshold: 5, supplier: '', branchId: '',
+        genericName: '', countryOfOrigin: '', purchaseUnit: 'Pack', dispensingUnit: 'Unit', conversionFactor: 1
       });
-      toast.success(navigator.onLine ? 'Inventory updated successfully' : 'Inventory updated offline!');
+      toast.success(navigator.onLine ? 'Stock updated successfully' : 'Stock updated offline!');
     } catch (error) {
       handleFirestoreError(error, OperationType.UPDATE, `medicines/${editingProduct.id}`);
     }
@@ -7926,6 +8014,169 @@ const InventoryView = ({
     }
   };
 
+  const handleOpenReceiveStock = (prod?: InventoryProduct) => {
+    if (prod) {
+      setReceiveForm({
+        productId: prod.id,
+        shelfQuantityReceived: 1,
+        warehouseQuantityReceived: 0,
+        quantityReceived: 1,
+        warehouseId: prod.warehouseId || '',
+        batchNumber: prod.batchNumber || '',
+        expiryDate: prod.expiryDate || '',
+        costPrice: prod.costPrice || 0,
+        price: prod.price || 0,
+        supplier: prod.supplier || ''
+      });
+    } else {
+      const firstProd = products[0];
+      setReceiveForm({
+        productId: firstProd ? firstProd.id : '',
+        shelfQuantityReceived: 1,
+        warehouseQuantityReceived: 0,
+        quantityReceived: 1,
+        warehouseId: firstProd?.warehouseId || '',
+        batchNumber: firstProd ? (firstProd.batchNumber || '') : '',
+        expiryDate: firstProd ? (firstProd.expiryDate || '') : '',
+        costPrice: firstProd ? (firstProd.costPrice || 0) : 0,
+        price: firstProd ? (firstProd.price || 0) : 0,
+        supplier: firstProd ? (firstProd.supplier || '') : ''
+      });
+    }
+    setIsReceivingStock(true);
+    setIsAdding(false);
+    setEditingProduct(null);
+  };
+
+  const handleSelectReceiveProduct = (prodId: string) => {
+    const selected = products.find(p => p.id === prodId);
+    if (selected) {
+      setReceiveForm(prev => ({
+        ...prev,
+        productId: selected.id,
+        warehouseId: selected.warehouseId || prev.warehouseId || '',
+        batchNumber: selected.batchNumber || '',
+        expiryDate: selected.expiryDate || '',
+        costPrice: selected.costPrice || 0,
+        price: selected.price || 0,
+        supplier: selected.supplier || ''
+      }));
+    } else {
+      setReceiveForm(prev => ({ ...prev, productId: prodId }));
+    }
+  };
+
+  const handleConfirmReceiveStock = async () => {
+    const targetProduct = products.find(p => p.id === receiveForm.productId);
+    if (!targetProduct) {
+      toast.error('Please select an existing medicine to receive stock');
+      return;
+    }
+    const shelfRec = Number(receiveForm.shelfQuantityReceived || 0);
+    const whRec = Number(receiveForm.warehouseQuantityReceived || 0);
+    const addedQty = (receiveForm.shelfQuantityReceived > 0 || receiveForm.warehouseQuantityReceived > 0)
+      ? (shelfRec + whRec)
+      : Number(receiveForm.quantityReceived || 0);
+
+    if (addedQty <= 0) {
+      toast.error('Quantity received must be greater than zero');
+      return;
+    }
+
+    const currentShelf = targetProduct.shelfQuantity ?? (targetProduct.warehouseQuantity !== undefined ? Math.max(0, targetProduct.quantity - (targetProduct.warehouseQuantity || 0)) : targetProduct.quantity);
+    const currentWh = targetProduct.warehouseQuantity ?? 0;
+
+    const resolvedShelfRec = (receiveForm.shelfQuantityReceived > 0 || receiveForm.warehouseQuantityReceived > 0) ? shelfRec : addedQty;
+    const resolvedWhRec = (receiveForm.shelfQuantityReceived > 0 || receiveForm.warehouseQuantityReceived > 0) ? whRec : 0;
+
+    const newShelf = currentShelf + resolvedShelfRec;
+    const newWh = currentWh + resolvedWhRec;
+    const newQty = (targetProduct.quantity || 0) + addedQty;
+    const factorOfConv = targetProduct.conversionFactor || 1;
+
+    const targetWH = warehouses.find(w => w.id === receiveForm.warehouseId);
+    const whName = targetWH ? targetWH.name : (targetProduct.warehouseName || (newWh > 0 ? 'Main Warehouse' : ''));
+
+    const updatedData: Partial<InventoryProduct> = {
+      quantity: newQty,
+      shelfQuantity: newShelf,
+      warehouseQuantity: newWh,
+      warehouseId: receiveForm.warehouseId || targetProduct.warehouseId || '',
+      warehouseName: whName,
+      updatedAt: Date.now()
+    };
+    if (receiveForm.batchNumber.trim()) updatedData.batchNumber = receiveForm.batchNumber.trim();
+    if (receiveForm.expiryDate) updatedData.expiryDate = receiveForm.expiryDate;
+    if (receiveForm.costPrice !== undefined && receiveForm.costPrice >= 0) updatedData.costPrice = Number(receiveForm.costPrice);
+    if (receiveForm.price !== undefined && receiveForm.price > 0) updatedData.price = Number(receiveForm.price);
+    if (receiveForm.supplier?.trim()) updatedData.supplier = receiveForm.supplier.trim();
+
+    try {
+      if (!navigator.onLine && addToOfflineQueue) {
+        addToOfflineQueue({
+          id: targetProduct.id,
+          type: 'inventory',
+          action: 'update',
+          data: updatedData
+        });
+      }
+
+      await updateDoc(doc(db, 'medicines', targetProduct.id), updatedData);
+
+      // Also if warehouse received > 0, log in warehouse_transactions
+      if (resolvedWhRec > 0) {
+        const txId = `tx_${Date.now()}`;
+        await setDoc(doc(db, 'warehouse_transactions', txId), {
+          id: txId,
+          pharmacyId: ownerId,
+          type: 'receiving',
+          productId: targetProduct.id,
+          productName: targetProduct.name,
+          quantity: resolvedWhRec,
+          batchNumber: receiveForm.batchNumber || targetProduct.batchNumber || '',
+          expiryDate: receiveForm.expiryDate || targetProduct.expiryDate || '',
+          sourceId: receiveForm.supplier || targetProduct.supplier || 'Intake',
+          sourceName: receiveForm.supplier || targetProduct.supplier || 'Intake Source',
+          destinationId: receiveForm.warehouseId || targetProduct.warehouseId || 'main',
+          destinationName: whName,
+          notes: `Stock received: ${resolvedShelfRec} to shelf, ${resolvedWhRec} to warehouse`,
+          createdBy: user.displayName || user.email || 'Staff',
+          createdAt: Date.now()
+        }).catch(err => console.warn(err));
+      }
+
+      // Record Bin Card Entry as Purchase / Stock In (NOT a sale)
+      const targetBranchId = targetProduct.branchId || (selectedBranchId === 'all' ? `main_branch_${ownerId}` : selectedBranchId);
+      const currentBranchName = branches.find(b => b.id === targetBranchId)?.name || 'Main Branch (HQ)';
+      const userRefName = user.displayName || user.email || 'Staff';
+
+      await recordBinCardMovement(db, {
+        pharmacyId: ownerId,
+        branchId: targetBranchId,
+        productId: targetProduct.id,
+        productName: targetProduct.name,
+        genericName: targetProduct.genericName || '',
+        transactionType: 'Purchase',
+        referenceNumber: receiveForm.batchNumber || `RCV-${Date.now().toString().slice(-6)}`,
+        quantityIn: addedQty,
+        quantityOut: 0,
+        balance: newQty,
+        user: userRefName,
+        branch: currentBranchName,
+        product: targetProduct.name,
+        countryOfOrigin: targetProduct.countryOfOrigin || '',
+        purchaseUnit: targetProduct.purchaseUnit || 'Pack',
+        dispensingUnit: targetProduct.dispensingUnit || 'Unit',
+        conversionFactor: factorOfConv
+      });
+
+      setIsReceivingStock(false);
+      toast.success(`Stock received: +${addedQty} ${targetProduct.purchaseUnit || 'units'} added (Shelf: +${resolvedShelfRec}, WH: +${resolvedWhRec})`);
+    } catch (error) {
+      handleFirestoreError(error, OperationType.UPDATE, `medicines/${targetProduct.id}`);
+    }
+  };
+
   const handleExportPDF = () => {
     // Group by category for more detail
     const categories = Array.from(new Set(filteredProducts.map(m => m.category)));
@@ -7945,25 +8196,51 @@ const InventoryView = ({
 
   return (
     <div className="p-8 max-w-7xl mx-auto">
-      <div className="flex justify-between items-center mb-8">
+      <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-8">
         <div>
-          <h1 className="text-2xl font-bold text-slate-900 dark:text-white">Inventory Management</h1>
-          <p className="text-slate-500 dark:text-slate-400">
-            {plan === 'basic' ? `${products.length} / ${productLimit} products used` : `${products.length} products in stock`}
+          <div className="flex items-center gap-3">
+            <h1 className="text-2xl font-bold text-slate-900 dark:text-white">Stock Management</h1>
+            <span className="px-2.5 py-0.5 text-xs font-bold rounded-full bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300">
+              Stock Option
+            </span>
+          </div>
+          <p className="text-slate-500 dark:text-slate-400 mt-1">
+            {plan === 'basic' ? `${products.length} / ${productLimit} products tracked` : `${products.length} products in stock`} • Dedicated stock intake and inventory controls
           </p>
         </div>
-        <div className="flex gap-3">
+        <div className="flex flex-wrap items-center gap-3">
+          {onNavigateToDispense && (
+            <button
+              onClick={onNavigateToDispense}
+              className="flex items-center gap-2 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-200 px-4 py-2.5 rounded-xl font-bold text-sm transition-all cursor-pointer border border-slate-200 dark:border-slate-700"
+              title="Switch to Dispense screen"
+            >
+              <ShoppingCart size={16} className="text-emerald-600" />
+              <span>Dispense (POS)</span>
+            </button>
+          )}
           <button 
             onClick={handleExportPDF}
-            className="flex items-center gap-2 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300 px-4 py-2 rounded-xl font-bold text-sm hover:bg-slate-50 dark:hover:bg-slate-800 transition-all"
+            className="flex items-center gap-2 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300 px-4 py-2.5 rounded-xl font-bold text-sm hover:bg-slate-50 dark:hover:bg-slate-800 transition-all cursor-pointer"
           >
             <Download size={18} /> Export PDF
           </button>
           <button 
-            onClick={() => setIsAdding(true)}
-            className="bg-blue-600 text-white px-6 py-3 rounded-xl font-bold hover:bg-blue-700 transition-all shadow-lg shadow-blue-100 dark:shadow-none flex items-center gap-2"
+            onClick={() => handleOpenReceiveStock()}
+            className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white px-5 py-2.5 rounded-xl font-bold text-sm transition-all shadow-lg shadow-emerald-100 dark:shadow-none cursor-pointer"
+            title="Receive stock intake for an existing medicine without registering a sale"
           >
-            <Plus size={20} /> Add Product
+            <PackagePlus size={18} /> Receive Stock
+          </button>
+          <button 
+            onClick={() => {
+              setIsAdding(true);
+              setIsReceivingStock(false);
+              setEditingProduct(null);
+            }}
+            className="bg-blue-600 text-white px-6 py-2.5 rounded-xl font-bold hover:bg-blue-700 transition-all shadow-lg shadow-blue-100 dark:shadow-none flex items-center gap-2 cursor-pointer text-sm"
+          >
+            <Plus size={18} /> Add Product
           </button>
         </div>
       </div>
@@ -7971,7 +8248,7 @@ const InventoryView = ({
       {(isAdding || editingProduct) && (
         <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="bg-white dark:bg-slate-900 p-8 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-xl mb-8">
           <h2 className="text-xl font-bold mb-6 dark:text-white">
-            {editingProduct ? `Edit: ${editingProduct.name}` : 'New Product Entry'}
+            {editingProduct ? `Edit Stock: ${editingProduct.name}` : 'New Product Stock Entry'}
           </h2>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
             <div className="space-y-2">
@@ -7986,24 +8263,37 @@ const InventoryView = ({
               <label className="text-sm font-bold text-slate-700 dark:text-slate-300">Country of Origin</label>
               <input type="text" value={formData.countryOfOrigin || ''} onChange={e => setFormData({...formData, countryOfOrigin: e.target.value})} className="w-full px-4 py-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 dark:text-white outline-none focus:border-blue-500" placeholder="e.g. Ethiopia, India, Germany" />
             </div>
-            {/* Purchase Unit, Relatable Dispensing Unit Menu & Automatic Quantity Calculator */}
+            {/* Purchase Unit & Dispensing Unit */}
             <UnitSelectorFields
               purchaseUnit={formData.purchaseUnit || 'Box'}
               dispensingUnit={formData.dispensingUnit || 'Strip'}
-              conversionFactor={formData.conversionFactor || 10}
-              quantity={formData.quantity ?? 0}
-              showQuantitySection={true}
-              onChange={({ purchaseUnit, dispensingUnit, conversionFactor, quantity }) => {
-                setFormData(prev => ({
-                  ...prev,
-                  purchaseUnit,
-                  dispensingUnit,
-                  conversionFactor,
-                  ...(quantity !== undefined ? { quantity } : {})
-                }));
+              conversionFactor={formData.conversionFactor || 1}
+              quantity={formData.quantity}
+              onChange={({ purchaseUnit, dispensingUnit, conversionFactor, quantity: newQty }) => {
+                setFormData(prev => {
+                  const updated: any = {
+                    ...prev,
+                    purchaseUnit,
+                    dispensingUnit,
+                    conversionFactor
+                  };
+                  if (newQty !== undefined) {
+                    updated.quantity = newQty;
+                    const wh = Number(prev.warehouseQuantity || 0);
+                    updated.shelfQuantity = Math.max(0, newQty - wh);
+                  }
+                  return updated;
+                });
               }}
-              onQuantityChange={newQty => {
-                setFormData(prev => ({ ...prev, quantity: newQty }));
+              onQuantityChange={(newQty) => {
+                setFormData(prev => {
+                  const wh = Number(prev.warehouseQuantity || 0);
+                  return {
+                    ...prev,
+                    quantity: newQty,
+                    shelfQuantity: Math.max(0, newQty - wh)
+                  };
+                });
               }}
             />
             <div className="space-y-2">
@@ -8028,46 +8318,134 @@ const InventoryView = ({
             <div className="space-y-2">
               <label className="text-sm font-bold text-slate-700 dark:text-slate-300 flex justify-between">
                 <span>Selling Price (ETB)</span>
-                <span className="text-xs text-emerald-600 dark:text-emerald-400 font-semibold">per {formData.dispensingUnit || 'Strip'}</span>
+                <span className="text-xs text-emerald-600 dark:text-emerald-400 font-semibold">per {formData.dispensingUnit || 'Unit'}</span>
               </label>
               <input type="number" value={formData.price ?? 0} onChange={e => setFormData({...formData, price: Number(e.target.value)})} className="w-full px-4 py-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 dark:text-white outline-none focus:border-blue-500" />
-              {formData.conversionFactor && formData.conversionFactor > 1 && (formData.price || 0) > 0 && (
-                <p className="text-[11px] text-slate-400">
-                  = {((formData.price || 0) * (formData.conversionFactor || 1)).toLocaleString()} ETB per {formData.purchaseUnit || 'Box'}
-                </p>
-              )}
             </div>
             <div className="space-y-2">
               <label className="text-sm font-bold text-slate-700 dark:text-slate-300 flex justify-between">
                 <span>Cost Price (ETB)</span>
-                <span className="text-xs text-blue-600 dark:text-blue-400 font-semibold">per {formData.purchaseUnit || 'Box'}</span>
+                <span className="text-xs text-blue-600 dark:text-blue-400 font-semibold">per {formData.purchaseUnit || 'Pack'}</span>
               </label>
               <input type="number" value={formData.costPrice ?? 0} onChange={e => setFormData({...formData, costPrice: Number(e.target.value)})} className="w-full px-4 py-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 dark:text-white outline-none focus:border-blue-500" />
-              {formData.conversionFactor && formData.conversionFactor > 1 && (formData.costPrice || 0) > 0 && (
-                <p className="text-[11px] text-slate-400">
-                  = {((formData.costPrice || 0) / (formData.conversionFactor || 1)).toFixed(2)} ETB per {formData.dispensingUnit || 'Strip'}
-                </p>
-              )}
             </div>
-            <div className="space-y-2">
-              <label className="text-sm font-bold text-slate-700 dark:text-slate-300 flex justify-between">
-                <span>Intake Stock ({formData.purchaseUnit || 'Box'}es)</span>
-                <span className="text-xs text-emerald-600 dark:text-emerald-400 font-bold">
-                  = {((formData.quantity || 0) * (formData.conversionFactor || 1)).toFixed(0)} {formData.dispensingUnit || 'Strip'}s
+            {/* SEPARATE STOCK AND WAREHOUSE ALLOCATION */}
+            <div className="col-span-full p-4 bg-slate-50 dark:bg-slate-800/60 rounded-2xl border border-slate-200 dark:border-slate-700 space-y-3">
+              <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-700 pb-2">
+                <span className="text-sm font-bold text-slate-800 dark:text-slate-200 flex items-center gap-2">
+                  <Layers size={16} className="text-blue-500" />
+                  Stock & Warehouse Inventory Allocation
                 </span>
-              </label>
-              <input type="number" min="0" step="any" value={formData.quantity ?? 0} onChange={e => setFormData({...formData, quantity: Math.max(0, Number(e.target.value))})} className="w-full px-4 py-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 dark:text-white outline-none focus:border-blue-500" />
+                <span className="text-xs font-semibold text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-900/30 px-2.5 py-0.5 rounded-full">
+                  Entered Separately
+                </span>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {/* Store / Shelf Stock */}
+                <div className="p-3 bg-white dark:bg-slate-900 rounded-xl border border-blue-100 dark:border-blue-900/40 space-y-1.5">
+                  <label className="text-sm font-bold text-blue-700 dark:text-blue-400 flex justify-between items-center">
+                    <span className="flex items-center gap-1.5">
+                      <Store size={15} />
+                      Store / Shelf Stock
+                    </span>
+                    <span className="text-xs bg-blue-50 dark:bg-blue-950/60 text-blue-600 dark:text-blue-300 px-2 py-0.5 rounded-md font-mono">
+                      {formData.purchaseUnit || 'Pack'}s
+                    </span>
+                  </label>
+                  <input 
+                    type="number" 
+                    min="0" 
+                    step="any"
+                    placeholder="e.g. 20"
+                    value={formData.shelfQuantity ?? ''} 
+                    onChange={e => {
+                      const val = Math.max(0, Number(e.target.value));
+                      setFormData(prev => ({
+                        ...prev, 
+                        shelfQuantity: val,
+                        quantity: val + Number(prev.warehouseQuantity || 0)
+                      }));
+                    }} 
+                    className="w-full px-4 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 dark:text-white outline-none focus:border-blue-500 font-bold" 
+                  />
+                  <p className="text-[11px] text-slate-400">
+                    Active stock on dispensing shelves & front counter
+                  </p>
+                </div>
+
+                {/* Warehouse Depot Stock */}
+                <div className="p-3 bg-white dark:bg-slate-900 rounded-xl border border-purple-100 dark:border-purple-900/40 space-y-1.5">
+                  <label className="text-sm font-bold text-purple-700 dark:text-purple-400 flex justify-between items-center">
+                    <span className="flex items-center gap-1.5">
+                      <Building2 size={15} />
+                      Warehouse Depot Stock
+                    </span>
+                    <span className="text-xs bg-purple-50 dark:bg-purple-950/60 text-purple-600 dark:text-purple-300 px-2 py-0.5 rounded-md font-mono">
+                      {formData.purchaseUnit || 'Pack'}s
+                    </span>
+                  </label>
+                  <input 
+                    type="number" 
+                    min="0" 
+                    step="any"
+                    placeholder="e.g. 80"
+                    value={formData.warehouseQuantity ?? ''} 
+                    onChange={e => {
+                      const val = Math.max(0, Number(e.target.value));
+                      setFormData(prev => ({
+                        ...prev, 
+                        warehouseQuantity: val,
+                        quantity: Number(prev.shelfQuantity || 0) + val
+                      }));
+                    }} 
+                    className="w-full px-4 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 dark:text-white outline-none focus:border-purple-500 font-bold" 
+                  />
+                  <p className="text-[11px] text-slate-400">
+                    Reserve stock stored in back storage or depot facility
+                  </p>
+                </div>
+              </div>
+
+              {/* Warehouse Location Selector & Live Calculation */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-1">
+                <div className="space-y-1.5">
+                  <label className="text-xs font-bold text-slate-700 dark:text-slate-300">
+                    Target Warehouse Facility
+                  </label>
+                  <select 
+                    value={formData.warehouseId || ''} 
+                    onChange={e => setFormData({ ...formData, warehouseId: e.target.value })} 
+                    className="w-full px-4 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 dark:text-white outline-none focus:border-blue-500 font-medium text-xs"
+                  >
+                    <option value="">Main Warehouse / HQ Storage</option>
+                    {warehouses.map((w: any) => (
+                      <option key={w.id} value={w.id}>{w.name} ({w.location || 'Depot'})</option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="flex flex-col justify-center px-4 py-2.5 bg-blue-50/60 dark:bg-blue-950/20 rounded-xl border border-blue-100 dark:border-blue-900/30">
+                  <span className="text-[10px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider">
+                    Total In-Stock Sum
+                  </span>
+                  <span className="text-base font-black text-slate-900 dark:text-white">
+                    {(Number(formData.shelfQuantity || 0) + Number(formData.warehouseQuantity || 0)).toLocaleString()} {formData.purchaseUnit || 'Pack'}s
+                  </span>
+                  <span className="text-[11px] text-slate-500 mt-0.5">
+                    Shelf: {Number(formData.shelfQuantity || 0)} | Warehouse: {Number(formData.warehouseQuantity || 0)}
+                  </span>
+                </div>
+              </div>
             </div>
+
             <div className="space-y-2">
               <label className="text-sm font-bold text-slate-700 dark:text-slate-300">Expiry Date</label>
               <input type="date" value={formData.expiryDate || ''} onChange={e => setFormData({...formData, expiryDate: e.target.value})} className="w-full px-4 py-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 dark:text-white outline-none focus:border-blue-500" />
             </div>
             <div className="space-y-2">
               <label className="text-sm font-bold text-slate-700 dark:text-slate-300 flex justify-between">
-                <span>Low Stock Alert at</span>
-                <span className="text-xs text-amber-600 dark:text-amber-400 font-semibold">
-                  {((formData.lowStockThreshold || 5) * (formData.conversionFactor || 1))} {formData.dispensingUnit || 'Strip'}s
-                </span>
+                <span>Low Stock Alert ({formData.purchaseUnit || 'Pack'}s)</span>
               </label>
               <input type="number" value={formData.lowStockThreshold ?? 5} onChange={e => setFormData({...formData, lowStockThreshold: Number(e.target.value)})} className="w-full px-4 py-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 dark:text-white outline-none focus:border-blue-500" />
             </div>
@@ -8100,7 +8478,7 @@ const InventoryView = ({
                 setEditingProduct(null);
                 setFormData({ 
                   name: '', category: 'Medicine', price: 0, costPrice: 0, quantity: 0, batchNumber: '', expiryDate: '', lowStockThreshold: 5, supplier: '', branchId: '',
-                  genericName: '', countryOfOrigin: '', purchaseUnit: '', dispensingUnit: '', conversionFactor: 1
+                  genericName: '', countryOfOrigin: '', purchaseUnit: 'Pack', dispensingUnit: 'Unit', conversionFactor: 1
                 });
               }} 
               className="px-6 py-3 text-slate-600 dark:text-slate-400 font-bold hover:bg-slate-100 dark:hover:bg-slate-800 rounded-xl transition-all"
@@ -8111,9 +8489,303 @@ const InventoryView = ({
               onClick={editingProduct ? handleUpdateProduct : handleAddProduct} 
               className="bg-blue-600 text-white px-8 py-3 rounded-xl font-bold hover:bg-blue-700 transition-all shadow-lg shadow-blue-100 dark:shadow-none"
             >
-              {editingProduct ? 'Update Inventory' : 'Save Product'}
+              {editingProduct ? 'Update Stock' : 'Save Product'}
             </button>
           </div>
+        </motion.div>
+      )}
+
+      {/* Stock Receiving Modal / Panel */}
+      {isReceivingStock && (
+        <motion.div 
+          initial={{ opacity: 0, y: 20 }} 
+          animate={{ opacity: 1, y: 0 }} 
+          className="bg-white dark:bg-slate-900 p-8 rounded-3xl border-2 border-emerald-500/40 dark:border-emerald-500/30 shadow-xl mb-8"
+          id="stock-receiving-panel"
+        >
+          <div className="flex items-center justify-between mb-6">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-emerald-50 dark:bg-emerald-950/50 text-emerald-600 dark:text-emerald-400 flex items-center justify-center">
+                <PackagePlus size={22} />
+              </div>
+              <div>
+                <h2 className="text-xl font-bold dark:text-white">Stock Receiving (Intake)</h2>
+                <p className="text-xs text-slate-500 dark:text-slate-400">
+                  Receive new shipment for existing medicines. Reuses existing catalog details, logs to Bin Card as Purchase, and keeps stock receiving completely separate from sales/dispensing.
+                </p>
+              </div>
+            </div>
+            <button
+              onClick={() => setIsReceivingStock(false)}
+              className="p-2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 rounded-lg cursor-pointer"
+            >
+              <X size={20} />
+            </button>
+          </div>
+
+          {/* Medicine Selection */}
+          <div className="mb-6">
+            <label className="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 block mb-2">
+              Select Medicine to Restock
+            </label>
+            <select
+              value={receiveForm.productId}
+              onChange={e => handleSelectReceiveProduct(e.target.value)}
+              className="w-full px-4 py-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white font-bold outline-none focus:border-emerald-500"
+            >
+              <option value="">-- Choose Existing Medicine --</option>
+              {products.map(p => (
+                <option key={p.id} value={p.id}>
+                  {p.name} {p.genericName ? `(${p.genericName})` : ''} — Current: {p.quantity} {p.purchaseUnit || 'Packs'} ({p.quantity * (p.conversionFactor || 1)} {p.dispensingUnit || 'Strips'})
+                </option>
+              ))}
+            </select>
+          </div>
+
+          {/* Details of Selected Medicine */}
+          {(() => {
+            const selectedProd = products.find(p => p.id === receiveForm.productId);
+            if (!selectedProd) return (
+              <div className="p-6 bg-slate-50 dark:bg-slate-800/50 rounded-2xl text-center text-slate-400 text-sm">
+                Please select a medicine above to enter intake quantities.
+              </div>
+            );
+
+            const conv = selectedProd.conversionFactor || 1;
+            const currentTotalDispensing = (selectedProd.quantity || 0) * conv;
+            const receivingPurchaseQty = Number(receiveForm.quantityReceived) || 0;
+            const receivingDispensingQty = receivingPurchaseQty * conv;
+            const newTotalPurchaseQty = (selectedProd.quantity || 0) + receivingPurchaseQty;
+            const newTotalDispensingQty = newTotalPurchaseQty * conv;
+
+            return (
+              <div className="space-y-6">
+                {/* Reused Medicine Identity Card */}
+                <div className="p-4 bg-emerald-50/50 dark:bg-emerald-950/20 border border-emerald-100 dark:border-emerald-900/30 rounded-2xl flex flex-wrap items-center justify-between gap-4">
+                  <div>
+                    <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-700 dark:text-emerald-400 bg-emerald-100 dark:bg-emerald-900/50 px-2 py-0.5 rounded">
+                      Reusing Existing Medicine Record
+                    </span>
+                    <h3 className="text-lg font-bold text-slate-900 dark:text-white mt-1">
+                      {selectedProd.name} {selectedProd.genericName && <span className="text-sm font-normal text-slate-500">({selectedProd.genericName})</span>}
+                    </h3>
+                    <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                      Category: <span className="font-semibold">{selectedProd.category || 'Medicine'}</span> | Origin: <span className="font-semibold">{selectedProd.countryOfOrigin || 'N/A'}</span>
+                    </p>
+                  </div>
+                  <div className="text-right">
+                    <p className="text-xs text-slate-500 dark:text-slate-400">Current Stock:</p>
+                    <p className="text-base font-black text-slate-800 dark:text-slate-200">
+                      {selectedProd.quantity} {selectedProd.purchaseUnit || 'Units'}
+                    </p>
+                    <div className="flex items-center gap-2 justify-end text-[11px] text-slate-500 dark:text-slate-400 font-medium mt-0.5">
+                      <span className="text-blue-600 dark:text-blue-400">Shelf: {selectedProd.shelfQuantity ?? (selectedProd.warehouseQuantity !== undefined ? Math.max(0, selectedProd.quantity - (selectedProd.warehouseQuantity || 0)) : selectedProd.quantity)}</span>
+                      <span>•</span>
+                      <span className="text-purple-600 dark:text-purple-400">WH: {selectedProd.warehouseQuantity ?? 0}</span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* SEPARATE SHELF AND WAREHOUSE RECEIVING ALLOCATION */}
+                <div className="p-4 bg-emerald-50/40 dark:bg-emerald-950/20 rounded-2xl border border-emerald-200/60 dark:border-emerald-900/40 space-y-3">
+                  <div className="flex items-center justify-between border-b border-emerald-200/50 dark:border-emerald-900/40 pb-2">
+                    <span className="text-sm font-bold text-slate-800 dark:text-slate-200 flex items-center gap-2">
+                      <Layers size={16} className="text-emerald-600" />
+                      Receiving Allocation (Shelf vs Warehouse)
+                    </span>
+                    <span className="text-xs font-semibold text-emerald-700 dark:text-emerald-300 bg-emerald-100 dark:bg-emerald-900/40 px-2.5 py-0.5 rounded-full">
+                      Entered Separately
+                    </span>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    {/* Store / Shelf Stock Received */}
+                    <div className="p-3 bg-white dark:bg-slate-900 rounded-xl border border-blue-100 dark:border-blue-900/40 space-y-1.5">
+                      <label className="text-sm font-bold text-blue-700 dark:text-blue-400 flex justify-between items-center">
+                        <span className="flex items-center gap-1.5">
+                          <Store size={15} />
+                          Receive to Store / Shelf
+                        </span>
+                        <span className="text-xs bg-blue-50 dark:bg-blue-950/60 text-blue-600 dark:text-blue-300 px-2 py-0.5 rounded-md font-mono">
+                          {selectedProd.purchaseUnit || 'Units'}
+                        </span>
+                      </label>
+                      <input 
+                        type="number" 
+                        min="0" 
+                        step="any"
+                        placeholder="0"
+                        value={receiveForm.shelfQuantityReceived ?? ''} 
+                        onChange={e => {
+                          const val = Math.max(0, Number(e.target.value));
+                          setReceiveForm(prev => ({
+                            ...prev, 
+                            shelfQuantityReceived: val,
+                            quantityReceived: val + Number(prev.warehouseQuantityReceived || 0)
+                          }));
+                        }} 
+                        className="w-full px-4 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 dark:text-white outline-none focus:border-blue-500 font-bold" 
+                      />
+                      <p className="text-[11px] text-slate-400">
+                        Added directly to shelf for immediate dispensing
+                      </p>
+                    </div>
+
+                    {/* Warehouse Depot Stock Received */}
+                    <div className="p-3 bg-white dark:bg-slate-900 rounded-xl border border-purple-100 dark:border-purple-900/40 space-y-1.5">
+                      <label className="text-sm font-bold text-purple-700 dark:text-purple-400 flex justify-between items-center">
+                        <span className="flex items-center gap-1.5">
+                          <Building2 size={15} />
+                          Receive to Warehouse Depot
+                        </span>
+                        <span className="text-xs bg-purple-50 dark:bg-purple-950/60 text-purple-600 dark:text-purple-300 px-2 py-0.5 rounded-md font-mono">
+                          {selectedProd.purchaseUnit || 'Units'}
+                        </span>
+                      </label>
+                      <input 
+                        type="number" 
+                        min="0" 
+                        step="any"
+                        placeholder="0"
+                        value={receiveForm.warehouseQuantityReceived ?? ''} 
+                        onChange={e => {
+                          const val = Math.max(0, Number(e.target.value));
+                          setReceiveForm(prev => ({
+                            ...prev, 
+                            warehouseQuantityReceived: val,
+                            quantityReceived: Number(prev.shelfQuantityReceived || 0) + val
+                          }));
+                        }} 
+                        className="w-full px-4 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 dark:text-white outline-none focus:border-purple-500 font-bold" 
+                      />
+                      <p className="text-[11px] text-slate-400">
+                        Placed in back storage facility / depot
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* Warehouse Location Selector & Live Calculation */}
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-1">
+                    <div className="space-y-1.5">
+                      <label className="text-xs font-bold text-slate-700 dark:text-slate-300">
+                        Depot Storage Location
+                      </label>
+                      <select 
+                        value={receiveForm.warehouseId || ''} 
+                        onChange={e => setReceiveForm({ ...receiveForm, warehouseId: e.target.value })} 
+                        className="w-full px-4 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 dark:text-white outline-none focus:border-emerald-500 font-medium text-xs"
+                      >
+                        <option value="">Main Warehouse / HQ Storage</option>
+                        {warehouses.map((w: any) => (
+                          <option key={w.id} value={w.id}>{w.name} ({w.location || 'Depot'})</option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div className="flex flex-col justify-center px-4 py-2 bg-emerald-100/50 dark:bg-emerald-950/40 rounded-xl border border-emerald-200/50 dark:border-emerald-900/30">
+                      <span className="text-[10px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider">
+                        Total Receiving Intake
+                      </span>
+                      <span className="text-sm font-black text-emerald-700 dark:text-emerald-300">
+                        +{(Number(receiveForm.shelfQuantityReceived || 0) + Number(receiveForm.warehouseQuantityReceived || 0))} {selectedProd.purchaseUnit || 'Units'}
+                      </span>
+                      <span className="text-[11px] text-slate-500 mt-0.5">
+                        New Total Stock: <strong className="text-slate-800 dark:text-slate-200">{(selectedProd.quantity || 0) + Number(receiveForm.shelfQuantityReceived || 0) + Number(receiveForm.warehouseQuantityReceived || 0)} {selectedProd.purchaseUnit || 'Units'}</strong>
+                      </span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Intake Form Inputs */}
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+
+                  <div className="space-y-2">
+                    <label className="text-sm font-bold text-slate-700 dark:text-slate-300">
+                      Batch Number
+                    </label>
+                    <input
+                      type="text"
+                      value={receiveForm.batchNumber}
+                      onChange={e => setReceiveForm({ ...receiveForm, batchNumber: e.target.value })}
+                      placeholder="e.g. BATCH-2026"
+                      className="w-full px-4 py-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 dark:text-white outline-none focus:border-emerald-500 font-mono"
+                    />
+                  </div>
+
+                  <div className="space-y-2">
+                    <label className="text-sm font-bold text-slate-700 dark:text-slate-300">
+                      Expiry Date
+                    </label>
+                    <input
+                      type="date"
+                      value={receiveForm.expiryDate}
+                      onChange={e => setReceiveForm({ ...receiveForm, expiryDate: e.target.value })}
+                      className="w-full px-4 py-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 dark:text-white outline-none focus:border-emerald-500"
+                    />
+                  </div>
+
+                  <div className="space-y-2">
+                    <label className="text-sm font-bold text-slate-700 dark:text-slate-300 flex justify-between">
+                      <span>Purchase / Cost Price (ETB)</span>
+                      <span className="text-xs text-blue-600 dark:text-blue-400 font-semibold">per {selectedProd.purchaseUnit || 'Pack'}</span>
+                    </label>
+                    <input
+                      type="number"
+                      min="0"
+                      step="any"
+                      value={receiveForm.costPrice}
+                      onChange={e => setReceiveForm({ ...receiveForm, costPrice: Number(e.target.value) })}
+                      className="w-full px-4 py-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 dark:text-white outline-none focus:border-emerald-500"
+                    />
+                  </div>
+
+                  <div className="space-y-2">
+                    <label className="text-sm font-bold text-slate-700 dark:text-slate-300 flex justify-between">
+                      <span>Selling Price (ETB)</span>
+                      <span className="text-xs text-emerald-600 dark:text-emerald-400 font-semibold">per {selectedProd.dispensingUnit || 'Unit'}</span>
+                    </label>
+                    <input
+                      type="number"
+                      min="0"
+                      step="any"
+                      value={receiveForm.price}
+                      onChange={e => setReceiveForm({ ...receiveForm, price: Number(e.target.value) })}
+                      className="w-full px-4 py-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 dark:text-white outline-none focus:border-emerald-500"
+                    />
+                  </div>
+
+                  <div className="space-y-2">
+                    <label className="text-sm font-bold text-slate-700 dark:text-slate-300">
+                      Supplier / Wholesaler (Optional)
+                    </label>
+                    <input
+                      type="text"
+                      value={receiveForm.supplier}
+                      onChange={e => setReceiveForm({ ...receiveForm, supplier: e.target.value })}
+                      placeholder="e.g. EPHARM, MedTech"
+                      className="w-full px-4 py-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 dark:text-white outline-none focus:border-emerald-500"
+                    />
+                  </div>
+                </div>
+
+                {/* Confirm Buttons */}
+                <div className="flex justify-end gap-4 pt-4 border-t border-slate-100 dark:border-slate-800">
+                  <button
+                    onClick={() => setIsReceivingStock(false)}
+                    className="px-6 py-2.5 text-slate-600 dark:text-slate-400 font-bold hover:bg-slate-100 dark:hover:bg-slate-800 rounded-xl transition-all cursor-pointer"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={handleConfirmReceiveStock}
+                    className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white px-8 py-2.5 rounded-xl font-bold transition-all shadow-lg shadow-emerald-100 dark:shadow-none cursor-pointer"
+                  >
+                    <PackagePlus size={18} /> Confirm Stock Intake
+                  </button>
+                </div>
+              </div>
+            );
+          })()}
         </motion.div>
       )}
 
@@ -8216,21 +8888,18 @@ const InventoryView = ({
                     </div>
                   </td>
                   <td className="px-8 py-5">
-                    {m.conversionFactor && m.conversionFactor > 1 ? (
-                      <div className="space-y-0.5">
-                        <p className={`font-bold ${isLowStock ? 'text-red-500' : 'text-slate-700 dark:text-slate-300'}`}>
-                          {m.quantity.toFixed(1)} {m.purchaseUnit || 'Packs'}
-                        </p>
-                        <p className="text-[10px] text-slate-400 font-bold">
-                          {(m.quantity * m.conversionFactor).toFixed(0)} {m.dispensingUnit || 'Strips'}
-                        </p>
-                        <p className="text-[9px] text-blue-500 italic font-medium">1 {m.purchaseUnit || 'pack'} = {m.conversionFactor} {m.dispensingUnit || 'units'}</p>
-                      </div>
-                    ) : (
-                      <p className={`font-bold ${isLowStock ? 'text-red-500' : 'text-slate-700 dark:text-slate-300'}`}>
-                        {m.quantity} {m.dispensingUnit || 'units'}
-                      </p>
-                    )}
+                    <p className={`font-bold ${isLowStock ? 'text-red-500' : 'text-slate-700 dark:text-slate-300'}`}>
+                      {m.quantity} {m.purchaseUnit || m.dispensingUnit || 'Units'}
+                    </p>
+                    <div className="flex items-center gap-1.5 mt-1 text-[10px] text-slate-500 font-medium flex-wrap">
+                      <span className="text-blue-600 dark:text-blue-400 font-semibold" title="Store / Shelf Stock">
+                        Shelf: {m.shelfQuantity ?? (m.warehouseQuantity !== undefined ? Math.max(0, m.quantity - (m.warehouseQuantity || 0)) : m.quantity)}
+                      </span>
+                      <span>•</span>
+                      <span className="text-purple-600 dark:text-purple-400 font-semibold" title="Warehouse Depot Stock">
+                        WH: {m.warehouseQuantity ?? 0}
+                      </span>
+                    </div>
                   </td>
                   <td className="px-8 py-5 font-bold text-slate-900 dark:text-white">{m.price.toLocaleString()} ETB</td>
                   <td className="px-8 py-5">
@@ -8244,18 +8913,37 @@ const InventoryView = ({
                     </div>
                   </td>
                   <td className="px-8 py-5">
-                    <div className="flex gap-2">
+                    <div className="flex gap-2 items-center">
+                      <button 
+                        onClick={() => handleOpenReceiveStock(m)}
+                        className="p-1.5 text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-950/40 rounded-lg transition-colors cursor-pointer"
+                        title="Receive Stock for this medicine"
+                      >
+                        <PackagePlus size={18} />
+                      </button>
                       <button 
                         onClick={() => {
                           setEditingProduct(m);
-                          setFormData(m);
+                          setFormData({
+                            ...m,
+                            shelfQuantity: m.shelfQuantity ?? (m.warehouseQuantity !== undefined ? Math.max(0, m.quantity - (m.warehouseQuantity || 0)) : m.quantity),
+                            warehouseQuantity: m.warehouseQuantity ?? 0
+                          });
                           setIsAdding(false);
+                          setIsReceivingStock(false);
                         }} 
-                        className="text-slate-400 hover:text-blue-600 transition-colors"
+                        className="text-slate-400 hover:text-blue-600 transition-colors p-1.5 cursor-pointer"
+                        title="Edit medicine details"
                       >
                         <Edit size={18} />
                       </button>
-                      <button onClick={() => handleDelete(m.id)} className="text-slate-400 hover:text-red-500 transition-colors"><Trash2 size={18} /></button>
+                      <button 
+                        onClick={() => handleDelete(m.id)} 
+                        className="text-slate-400 hover:text-red-500 transition-colors p-1.5 cursor-pointer"
+                        title="Remove product"
+                      >
+                        <Trash2 size={18} />
+                      </button>
                     </div>
                   </td>
                 </tr>
@@ -8730,6 +9418,7 @@ const StaffManagementView = ({
                 { id: 'dashboard', label: 'Dashboard' },
                 { id: 'inventory', label: 'Inventory' },
                 { id: 'sales', label: 'Sales & POS' },
+                { id: 'sales-history', label: 'Sales History' },
                 { id: 'marketplace', label: 'Marketplace' },
                 { id: 'orders', label: 'B2B Orders' },
                 { id: 'procurement', label: 'Procurement (PR & PO)' },
@@ -11697,13 +12386,17 @@ const SalesView = ({
   addToOfflineQueue, 
   syncStatus,
   selectedBranchId = 'all',
-  branches = []
+  branches = [],
+  onNavigateToStock,
+  onNavigateToSalesHistory
 }: { 
   user: UserProfile, 
   addToOfflineQueue?: (item: any) => void, 
   syncStatus?: string,
   selectedBranchId?: string,
-  branches?: Branch[]
+  branches?: Branch[],
+  onNavigateToStock?: () => void,
+  onNavigateToSalesHistory?: () => void
 }) => {
   const [products, setProducts] = useState<InventoryProduct[]>([]);
   const [cart, setCart] = useState<any[]>([]);
@@ -11957,14 +12650,14 @@ const SalesView = ({
             transactionType: 'Sale',
             referenceNumber: saleId,
             quantityIn: 0,
-            quantityOut: item.quantity * factorOfConv,
-            balance: Math.max(0, product.quantity - item.quantity) * factorOfConv,
+            quantityOut: item.quantity,
+            balance: Math.max(0, product.quantity - item.quantity),
             user: userRefName,
             branch: currentBranchName,
             product: product.name,
             countryOfOrigin: product.countryOfOrigin || '',
-            purchaseUnit: product.purchaseUnit || '',
-            dispensingUnit: product.dispensingUnit || '',
+            purchaseUnit: product.purchaseUnit || 'Pack',
+            dispensingUnit: product.dispensingUnit || 'Unit',
             conversionFactor: factorOfConv
           });
         }
@@ -12023,13 +12716,40 @@ const SalesView = ({
   return (
     <div className="p-8 max-w-7xl mx-auto grid grid-cols-1 lg:grid-cols-3 gap-8">
       <div className="lg:col-span-2">
-        <div className="flex justify-between items-center mb-8">
+        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-8">
           <div>
-            <h1 className="text-2xl font-bold text-slate-900 dark:text-white">Point of Sale</h1>
-            <p className="text-xs text-slate-400 mt-1 uppercase font-bold tracking-wider">Pharmacy Retail Terminal</p>
+            <div className="flex items-center gap-3">
+              <h1 className="text-2xl font-bold text-slate-900 dark:text-white">Dispense (POS)</h1>
+              <span className="px-2.5 py-0.5 text-xs font-bold rounded-full bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300">
+                Dispense Option
+              </span>
+            </div>
+            <p className="text-xs text-slate-400 mt-1 uppercase font-bold tracking-wider">Pharmacy Retail & Dispensing Terminal</p>
           </div>
-          <div className="flex items-center gap-2 text-xs font-bold text-slate-400 dark:text-slate-500 uppercase">
-            Plan: <span className="text-blue-600 dark:text-blue-400">{plan.toUpperCase()}</span>
+          <div className="flex items-center gap-3">
+            {onNavigateToSalesHistory && (
+              <button
+                onClick={onNavigateToSalesHistory}
+                className="flex items-center gap-2 bg-emerald-50 hover:bg-emerald-100 dark:bg-emerald-950/40 dark:hover:bg-emerald-900/60 text-emerald-700 dark:text-emerald-300 px-3.5 py-2 rounded-xl font-bold text-xs transition-all cursor-pointer border border-emerald-200 dark:border-emerald-800"
+                title="View what was sold today, this week, or month"
+              >
+                <History size={15} />
+                <span>View Sold Today</span>
+              </button>
+            )}
+            {onNavigateToStock && (
+              <button
+                onClick={onNavigateToStock}
+                className="flex items-center gap-2 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-200 px-3.5 py-2 rounded-xl font-bold text-xs transition-all cursor-pointer border border-slate-200 dark:border-slate-700"
+                title="Switch to Stock Management screen"
+              >
+                <Package size={15} className="text-blue-600" />
+                <span>Stock Management</span>
+              </button>
+            )}
+            <div className="flex items-center gap-2 text-xs font-bold text-slate-400 dark:text-slate-500 uppercase">
+              Plan: <span className="text-blue-600 dark:text-blue-400">{plan.toUpperCase()}</span>
+            </div>
           </div>
         </div>
 
@@ -12121,29 +12841,93 @@ const SalesView = ({
           </h2>
           
           <div className="space-y-4 mb-8 max-h-60 overflow-y-auto pr-2">
-            {cart.map((i, idx) => (
-              <div key={idx} className="flex flex-col text-sm bg-slate-50 dark:bg-slate-800 p-3 rounded-xl group/item">
-                <div className="flex justify-between items-center">
-                  <div className="flex-1">
-                    <p className="font-bold text-slate-900 dark:text-white">{i.name}</p>
-                    {i.batchNumber && (
-                      <p className="text-[10px] font-mono font-bold text-blue-500 dark:text-blue-400">Batch: {i.batchNumber} {i.expiryDate ? `| Exp: ${i.expiryDate}` : ''}</p>
-                    )}
-                    <p className="text-xs text-slate-400 dark:text-slate-500 mt-0.5">{i.quantity} x {i.price.toLocaleString()} ETB</p>
-                  </div>
-                  <div className="flex items-center gap-3">
-                    <p className="font-bold text-blue-600 dark:text-blue-400 whitespace-nowrap">{i.total.toLocaleString()} ETB</p>
+            {cart.map((i, idx) => {
+              const matchedProduct = products.find(p => p.id === i.productId);
+              const maxStock = matchedProduct ? matchedProduct.quantity : 999999;
+
+              return (
+                <div key={idx} className="flex flex-col text-sm bg-slate-50 dark:bg-slate-800 p-3 rounded-xl group/item gap-2">
+                  <div className="flex justify-between items-start">
+                    <div className="flex-1">
+                      <p className="font-bold text-slate-900 dark:text-white">{i.name}</p>
+                      {i.batchNumber && (
+                        <p className="text-[10px] font-mono font-bold text-blue-500 dark:text-blue-400">
+                          Batch: {i.batchNumber} {i.expiryDate ? `| Exp: ${i.expiryDate}` : ''}
+                        </p>
+                      )}
+                    </div>
                     <button 
                       onClick={() => setCart(cart.filter((_, index) => index !== idx))}
-                      className="p-1.5 text-slate-400 dark:text-slate-500 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg transition-all"
+                      className="p-1.5 text-slate-400 dark:text-slate-500 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg transition-all cursor-pointer"
                       title="Remove from cart"
                     >
                       <X size={14} />
                     </button>
                   </div>
+
+                  {/* Quantity Adjustment & Item Total */}
+                  <div className="flex items-center justify-between pt-1.5 border-t border-slate-200/50 dark:border-slate-700/50">
+                    <div className="flex items-center gap-1.5">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (i.quantity <= 1) {
+                            setCart(cart.filter((_, index) => index !== idx));
+                          } else {
+                            const newCart = [...cart];
+                            newCart[idx].quantity -= 1;
+                            newCart[idx].total = newCart[idx].quantity * newCart[idx].price;
+                            setCart(newCart);
+                          }
+                        }}
+                        className="w-7 h-7 rounded-lg bg-white dark:bg-slate-700 border border-slate-200 dark:border-slate-600 flex items-center justify-center font-bold text-slate-600 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-600 transition-colors cursor-pointer"
+                        title="Decrease quantity"
+                      >
+                        -
+                      </button>
+                      <input
+                        type="number"
+                        min="1"
+                        max={maxStock}
+                        value={i.quantity}
+                        onChange={(e) => {
+                          const val = Math.max(1, parseInt(e.target.value) || 1);
+                          const clamped = Math.min(val, maxStock);
+                          if (val > maxStock) {
+                            toast.error(`Available stock limit is ${maxStock}`);
+                          }
+                          const newCart = [...cart];
+                          newCart[idx].quantity = clamped;
+                          newCart[idx].total = clamped * newCart[idx].price;
+                          setCart(newCart);
+                        }}
+                        className="w-12 h-7 text-center rounded-lg border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-900 font-bold text-xs outline-none focus:border-blue-500"
+                        title="Enter quantity to dispense"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (i.quantity >= maxStock) {
+                            toast.error(`Available stock limit is ${maxStock}`);
+                            return;
+                          }
+                          const newCart = [...cart];
+                          newCart[idx].quantity += 1;
+                          newCart[idx].total = newCart[idx].quantity * newCart[idx].price;
+                          setCart(newCart);
+                        }}
+                        className="w-7 h-7 rounded-lg bg-white dark:bg-slate-700 border border-slate-200 dark:border-slate-600 flex items-center justify-center font-bold text-slate-600 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-600 transition-colors cursor-pointer"
+                        title="Increase quantity"
+                      >
+                        +
+                      </button>
+                      <span className="text-[11px] text-slate-400 ml-1">@ {i.price.toLocaleString()} ETB</span>
+                    </div>
+                    <p className="font-bold text-blue-600 dark:text-blue-400 whitespace-nowrap">{i.total.toLocaleString()} ETB</p>
+                  </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
             {cart.length === 0 && (
               <div className="text-center py-8 text-slate-400 dark:text-slate-600 italic">Cart is empty</div>
             )}
@@ -13154,8 +13938,9 @@ export default function App() {
       { id: 'bincard', label: 'Bin Card Reports', roles: ['pharmacy', 'staff'] },
       { id: 'expiry', label: 'Expiry Control', roles: ['pharmacy', 'staff'] },
       { id: 'forecasting', label: 'Forecasting', roles: ['pharmacy', 'staff'] },
-      { id: 'my-products', label: 'My Products', roles: ['importer', 'distributor', 'staff'] },
+      { id: 'my-products', label: 'Inventory', roles: ['importer', 'distributor', 'staff'] },
       { id: 'sales', label: 'Sales & POS', roles: ['pharmacy', 'staff'] },
+      { id: 'sales-history', label: 'Sales History', roles: ['pharmacy', 'staff'] },
       { id: 'customers', label: 'Customers', roles: ['pharmacy', 'staff'] },
       { id: 'suppliers', label: 'Wholesales', roles: ['pharmacy', 'staff'] },
       { id: 'marketplace', label: 'Marketplace', roles: ['pharmacy', 'admin', 'staff'] },
@@ -13190,7 +13975,7 @@ export default function App() {
 
     // Role-specific allowed list for extra safety
     const accessMap: Record<string, string[]> = {
-      pharmacy: ['dashboard', 'inventory', 'bincard', 'expiry', 'forecasting', 'sales', 'customers', 'marketplace', 'orders', 'procurement', 'suppliers', 'staff', 'branches', 'warehouses', 'subscription', 'settings'],
+      pharmacy: ['dashboard', 'inventory', 'bincard', 'expiry', 'forecasting', 'sales', 'sales-history', 'customers', 'marketplace', 'orders', 'procurement', 'suppliers', 'staff', 'branches', 'warehouses', 'subscription', 'settings'],
       importer: ['dashboard', 'my-products', 'orders', 'customer-management', 'warehouses', 'deliveries', 'advertising', 'reports', 'analytics', 'product-demand', 'staff', 'subscription', 'notifications', 'settings'],
       regional_manager: ['dashboard', 'settings'],
       marketing: ['dashboard', 'marketing-stats', 'settings'],
@@ -13621,12 +14406,13 @@ export default function App() {
                           ? <SuperAdminConsole initialTab="overview" onImpersonateOrg={(org) => { setImpersonatedUser(org); setProfile(org); }} />
                           : <DashboardView role={profile.role} user={profile} setActiveTab={setActiveTab} selectedBranchId={selectedBranchId} branches={branches} settings={systemSettings} />
                       )}
-                      {activeTab === 'inventory' && <InventoryView user={profile} addToOfflineQueue={addToOfflineQueue} syncStatus={syncStatus} selectedBranchId={selectedBranchId} branches={branches} />}
+                      {activeTab === 'inventory' && <InventoryView user={profile} addToOfflineQueue={addToOfflineQueue} syncStatus={syncStatus} selectedBranchId={selectedBranchId} branches={branches} warehouses={warehouses} onNavigateToDispense={() => setActiveTab('sales')} />}
                       {activeTab === 'bincard' && <BinCardLedgerView user={profile} branches={branches} />}
                       {activeTab === 'forecasting' && <ForecastingView user={profile} branches={branches} warehouses={warehouses} />}
                       {activeTab === 'expiry' && <ExpiryTrackerView user={profile} branches={branches} warehouses={warehouses} />}
                       {activeTab === 'my-products' && <ImporterInventoryView user={profile} />}
-                      {activeTab === 'sales' && <SalesView user={profile} addToOfflineQueue={addToOfflineQueue} syncStatus={syncStatus} selectedBranchId={selectedBranchId} branches={branches} />}
+                      {activeTab === 'sales' && <SalesView user={profile} addToOfflineQueue={addToOfflineQueue} syncStatus={syncStatus} selectedBranchId={selectedBranchId} branches={branches} onNavigateToStock={() => setActiveTab('inventory')} onNavigateToSalesHistory={() => setActiveTab('sales-history')} />}
+                      {activeTab === 'sales-history' && <SalesHistoryView user={profile} selectedBranchId={selectedBranchId} branches={branches} onNavigateToPOS={() => setActiveTab('sales')} />}
                       {activeTab === 'customers' && <CustomersView user={profile} addToOfflineQueue={addToOfflineQueue} syncStatus={syncStatus} />}
                       {activeTab === 'marketplace' && <MarketplaceView user={profile} />}
                       {activeTab === 'orders' && <OrdersView user={profile} />}

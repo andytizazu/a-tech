@@ -111,6 +111,8 @@ export default function DistributorView({ user, activeTab = 'dashboard', setActi
     category: 'Antibiotics',
     price: 0,
     costPrice: 0,
+    shelfQuantity: 0,
+    warehouseQuantity: 0,
     quantity: 0,
     batchNumber: '',
     expiryDate: '',
@@ -316,7 +318,19 @@ export default function DistributorView({ user, activeTab = 'dashboard', setActi
       toast.error('Required fields must be populated');
       return;
     }
+    const shelfQty = Number(prodForm.shelfQuantity || 0);
+    const whQty = Number(prodForm.warehouseQuantity || 0);
+    // If user provided values in shelf / warehouse, total is sum; otherwise fall back to quantity
+    const totalQty = (prodForm.shelfQuantity > 0 || prodForm.warehouseQuantity > 0) 
+      ? (shelfQty + whQty) 
+      : Number(prodForm.quantity || 0);
+    const resolvedShelfQty = (prodForm.shelfQuantity > 0 || prodForm.warehouseQuantity > 0) ? shelfQty : totalQty;
+    const resolvedWhQty = (prodForm.shelfQuantity > 0 || prodForm.warehouseQuantity > 0) ? whQty : 0;
+
     const prodId = `prod_${Date.now()}`;
+    const targetWH = warehouses.find(w => w.id === prodForm.warehouseId);
+    const whName = warehouses.length === 0 ? 'Main Warehouse' : (targetWH ? targetWH.name : 'Main Warehouse');
+
     const prodData: InventoryProduct = {
       id: prodId,
       pharmacyId: distributorUid,
@@ -325,11 +339,14 @@ export default function DistributorView({ user, activeTab = 'dashboard', setActi
       category: prodForm.category,
       price: Number(prodForm.price),
       costPrice: Number(prodForm.costPrice),
-      quantity: Number(prodForm.quantity),
+      quantity: totalQty,
+      shelfQuantity: resolvedShelfQty,
+      warehouseQuantity: resolvedWhQty,
+      warehouseName: whName,
       batchNumber: prodForm.batchNumber,
       expiryDate: prodForm.expiryDate,
       supplier: prodForm.supplier || 'Import Wholesalers',
-      warehouseId: warehouses.length === 0 ? 'main' : (prodForm.warehouseId || null),
+      warehouseId: warehouses.length === 0 ? 'main' : (prodForm.warehouseId || 'main'),
       lowStockThreshold: Number(prodForm.lowStockThreshold),
       purchaseUnit: prodForm.purchaseUnit || 'Box',
       dispensingUnit: prodForm.dispensingUnit || 'Tablet',
@@ -345,10 +362,10 @@ export default function DistributorView({ user, activeTab = 'dashboard', setActi
         name: prodForm.name,
         genericName: prodForm.genericName || '',
         category: prodForm.category,
-        description: `${prodForm.name} (Generic: ${prodForm.genericName || 'N/A'}). Pack: ${prodForm.purchaseUnit || 'Box'} / Dispensing: ${prodForm.dispensingUnit || 'Tablet'}. Conversion factor: ${prodForm.conversionFactor || 100}. Stock batch: ${prodForm.batchNumber}.`,
+        description: `${prodForm.name} (Generic: ${prodForm.genericName || 'N/A'}). Pack: ${prodForm.purchaseUnit || 'Box'} / Dispensing: ${prodForm.dispensingUnit || 'Tablet'}. Conversion factor: ${prodForm.conversionFactor || 100}. Stock batch: ${prodForm.batchNumber}. Shelf: ${resolvedShelfQty}, Warehouse: ${resolvedWhQty}.`,
         price: Number(prodForm.price),
         minOrderQuantity: 1,
-        stockQuantity: Number(prodForm.quantity),
+        stockQuantity: totalQty,
         importerId: distributorUid,
         importerName: user.distributorName || user.importerName || user.displayName,
         country: user.country || 'Ethiopia',
@@ -356,31 +373,30 @@ export default function DistributorView({ user, activeTab = 'dashboard', setActi
       };
       await setDoc(doc(db, 'products', prodId), marketplaceProduct);
       
-      // Also log beautiful transaction automatically in the warehouse logic!
-      if (prodForm.quantity > 0) {
+      // Also log transaction automatically in warehouse logic if warehouse has stock!
+      if (resolvedWhQty > 0 || totalQty > 0) {
         const txId = `tx_${Date.now()}`;
-        const targetWH = warehouses.find(w => w.id === prodForm.warehouseId);
         const txData: WarehouseTransaction = {
           id: txId,
           pharmacyId: distributorUid,
           type: 'receiving',
           productId: prodId,
           productName: prodForm.name,
-          quantity: Number(prodForm.quantity),
+          quantity: resolvedWhQty > 0 ? resolvedWhQty : totalQty,
           batchNumber: prodForm.batchNumber,
           expiryDate: prodForm.expiryDate,
           sourceId: prodForm.supplier || 'Importer',
           sourceName: prodForm.supplier || 'Importer Hub',
           destinationId: warehouses.length === 0 ? 'main' : (prodForm.warehouseId || 'primary'),
-          destinationName: warehouses.length === 0 ? 'Main Warehouse' : (targetWH ? targetWH.name : 'General Warehouse'),
-          notes: 'Initial stock intake on registration',
+          destinationName: whName,
+          notes: `Inventory intake: ${resolvedShelfQty} on shelf, ${resolvedWhQty} in warehouse`,
           createdBy: user.displayName,
           createdAt: Date.now()
         };
         await setDoc(doc(db, 'warehouse_transactions', txId), txData);
       }
 
-      toast.success('Drug stock registered in warehouse & B2B marketplace!');
+      toast.success('Inventory registered with shelf and warehouse stocks!');
       setShowAddProdModal(false);
       setProdForm({
         name: '',
@@ -388,6 +404,8 @@ export default function DistributorView({ user, activeTab = 'dashboard', setActi
         category: 'Antibiotics',
         price: 0,
         costPrice: 0,
+        shelfQuantity: 0,
+        warehouseQuantity: 0,
         quantity: 0,
         batchNumber: '',
         expiryDate: '',
@@ -416,7 +434,7 @@ export default function DistributorView({ user, activeTab = 'dashboard', setActi
     if (!prod) return;
 
     if (txForm.type === 'dispatch' && prod.quantity < txForm.quantity) {
-      toast.error(`Out of stock! Only ${prod.quantity} boxes available in warehouse.`);
+      toast.error(`Out of stock! Only ${prod.quantity} units available in warehouse.`);
       return;
     }
 
@@ -640,7 +658,7 @@ export default function DistributorView({ user, activeTab = 'dashboard', setActi
       docPDF.setFontSize(11);
       docPDF.setTextColor(51, 65, 85); // Slate-700
       docPDF.text(`Total Active Operations: ${totalActiveOrders} batches`, 14, 52);
-      docPDF.text(`Warehoused Volume: ${inventory.reduce((acc, curr) => acc + curr.quantity, 0)} boxes`, 14, 57);
+      docPDF.text(`Warehoused Volume: ${inventory.reduce((acc, curr) => acc + curr.quantity, 0)} units`, 14, 57);
       docPDF.text(`Low-Stock Depot Alerts: ${lowStockAlertsCount} products under warning threshold`, 14, 62);
       docPDF.text(`Total Warehouse Stock Value: $${totalInventoryVal.toFixed(2)}`, 14, 67);
 
@@ -758,7 +776,7 @@ export default function DistributorView({ user, activeTab = 'dashboard', setActi
             className="flex items-center gap-1.5 px-3.5 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-semibold transition shadow-sm"
           >
             <Plus size={14} />
-            Intake Product
+            Add Inventory
           </button>
         </div>
       )
@@ -1033,7 +1051,7 @@ export default function DistributorView({ user, activeTab = 'dashboard', setActi
                         <div className="flex flex-wrap gap-2 mt-2">
                           {inventory.filter(p => p.quantity <= p.lowStockThreshold).map(p => (
                             <span key={p.id} className="bg-white dark:bg-slate-900 text-yellow-800 dark:text-yellow-300 px-2 py-0.5 rounded-full text-[10px] font-mono font-bold border border-yellow-105">
-                              {p.name}: {p.quantity} boxes left (min {p.lowStockThreshold})
+                              {p.name}: {p.quantity} units left (min {p.lowStockThreshold})
                             </span>
                           ))}
                         </div>
@@ -1132,7 +1150,7 @@ export default function DistributorView({ user, activeTab = 'dashboard', setActi
                           id: `tx-${t.id}`,
                           type: 'stock',
                           title: `Stock Movement`,
-                          desc: `${t.notes || `Processed ${t.quantity} boxes.`}`,
+                          desc: `${t.notes || `Processed ${t.quantity} units.`}`,
                           time: t.createdAt || Date.now()
                         });
                       });
@@ -1233,7 +1251,7 @@ export default function DistributorView({ user, activeTab = 'dashboard', setActi
                         className="flex items-center gap-1.5 px-4 py-2 bg-slate-700 hover:bg-slate-600 dark:bg-slate-800 text-white font-bold text-xs rounded-xl border border-slate-600 rounded-xl transition"
                       >
                         <Sliders size={14} />
-                        Intake/Adjust
+                        Add/Adjust Inventory
                       </button>
                     </div>
                   </div>
@@ -1256,7 +1274,7 @@ export default function DistributorView({ user, activeTab = 'dashboard', setActi
                               <th className="p-4">Medicine & Class</th>
                               <th className="p-4">Batch #</th>
                               <th className="p-4">Housed Warehouse</th>
-                              <th className="p-4 text-center">In-Stock boxes</th>
+                              <th className="p-4 text-center">In-Stock units</th>
                               <th className="p-4">Cost Price ($)</th>
                               <th className="p-4">Direct Price ($ Excl / Incl 15% VAT)</th>
                               <th className="p-4 text-center">Expiry Status</th>
@@ -1290,6 +1308,11 @@ export default function DistributorView({ user, activeTab = 'dashboard', setActi
                                       <span className={`font-mono font-bold text-sm ${p.quantity <= p.lowStockThreshold ? 'text-rose-600 dark:text-rose-450' : 'text-slate-800 dark:text-slate-200'}`}>
                                         {p.quantity.toLocaleString()}
                                       </span>
+                                      <div className="flex items-center justify-center gap-1.5 mt-0.5 text-[10px] text-slate-500 font-medium flex-wrap">
+                                        <span className="text-blue-600 dark:text-blue-400 font-semibold" title="Store / Shelf Stock">Shelf: {p.shelfQuantity ?? (p.warehouseQuantity !== undefined ? Math.max(0, p.quantity - (p.warehouseQuantity || 0)) : p.quantity)}</span>
+                                        <span>•</span>
+                                        <span className="text-purple-600 dark:text-purple-400 font-semibold" title="Warehouse Depot Stock">WH: {p.warehouseQuantity ?? 0}</span>
+                                      </div>
                                       {p.quantity <= p.lowStockThreshold && (
                                         <div className="text-[9px] text-rose-500 font-bold">LOW STOCK</div>
                                       )}
@@ -1620,7 +1643,7 @@ export default function DistributorView({ user, activeTab = 'dashboard', setActi
                                   {t.productName}
                                 </td>
                                 <td className="p-3 text-center font-mono font-bold text-slate-700 dark:text-slate-300">
-                                  {t.quantity.toLocaleString()} boxes (Lot {t.batchNumber || 'N/A'})
+                                  {t.quantity.toLocaleString()} units (Lot {t.batchNumber || 'N/A'})
                                 </td>
                                 <td className="p-3 text-slate-500 max-w-[150px] truncate text-[11px]">
                                   {t.sourceName} &rarr; {t.destinationName}
@@ -1658,12 +1681,12 @@ export default function DistributorView({ user, activeTab = 'dashboard', setActi
                                 acc[current.category] = (acc[current.category] || 0) + current.quantity;
                                 return acc;
                               }, {} as Record<string, number>)
-                            ).map(([key, val]) => ({ name: key, boxes: val }))
+                            ).map(([key, val]) => ({ name: key, units: val }))
                           }>
                             <XAxis dataKey="name" stroke="#888888" fontSize={10} tickLine={false} />
                             <YAxis stroke="#888888" fontSize={10} tickLine={false} />
                             <Tooltip contentStyle={{ fontSize: 11, borderRadius: 8 }} />
-                            <Bar dataKey="boxes" fill="#2563eb" radius={[4, 4, 0, 0]} />
+                            <Bar dataKey="units" fill="#2563eb" radius={[4, 4, 0, 0]} />
                           </BarChart>
                         </ResponsiveContainer>
                       </div>
@@ -2137,7 +2160,7 @@ export default function DistributorView({ user, activeTab = 'dashboard', setActi
       {showAddProdModal && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
           <div className="bg-white dark:bg-slate-900 rounded-3xl p-6 max-w-xl w-full max-h-[92vh] overflow-y-auto border border-slate-200 dark:border-slate-800 shadow-2xl space-y-4">
-            <h3 className="font-bold text-slate-900 dark:text-white text-md">Intake Direct Medicine to Warehouses</h3>
+            <h3 className="font-bold text-slate-900 dark:text-white text-md">Add Inventory to Warehouses</h3>
             <form onSubmit={handleAddProduct} className="space-y-4">
               <div className="grid grid-cols-2 gap-2">
                 <div className="space-y-1">
@@ -2238,23 +2261,125 @@ export default function DistributorView({ user, activeTab = 'dashboard', setActi
                 }}
               />
 
-              <div className="grid grid-cols-2 gap-2">
-                <div className="space-y-1">
-                  <label className="text-xs font-bold text-slate-500 flex justify-between">
-                    <span>Stock ({prodForm.purchaseUnit || 'Box'}es)</span>
-                    <span className="text-[10px] text-emerald-600 font-bold">
-                      = {((prodForm.quantity || 0) * (prodForm.conversionFactor || 1)).toLocaleString()} {prodForm.dispensingUnit || 'Tablet'}s
-                    </span>
-                  </label>
-                  <input 
-                    type="number" 
-                    placeholder="250"
-                    value={prodForm.quantity || ''}
-                    onChange={e => setProdForm({ ...prodForm, quantity: Number(e.target.value) })}
-                    className="w-full px-3 py-2 text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white rounded-lg outline-none"
-                    required
-                  />
+              {/* SEPARATE STOCK AND WAREHOUSE ALLOCATION */}
+              <div className="p-3 bg-slate-50 dark:bg-slate-800/60 rounded-xl border border-slate-200 dark:border-slate-700 space-y-3">
+                <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-700 pb-2">
+                  <span className="text-xs font-bold text-slate-700 dark:text-slate-200 flex items-center gap-1.5">
+                    <Layers size={14} className="text-blue-500" />
+                    Stock & Warehouse Inventory Allocation
+                  </span>
+                  <span className="text-[11px] font-semibold text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-900/30 px-2 py-0.5 rounded">
+                    Entered Separately
+                  </span>
                 </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  {/* Store / Shelf Stock */}
+                  <div className="p-2.5 bg-white dark:bg-slate-900 rounded-lg border border-blue-100 dark:border-blue-900/40 space-y-1">
+                    <label className="text-xs font-bold text-blue-700 dark:text-blue-400 flex justify-between items-center">
+                      <span className="flex items-center gap-1">
+                        <Store size={13} />
+                        Store / Shelf Stock
+                      </span>
+                      <span className="text-[10px] bg-blue-50 dark:bg-blue-950/60 text-blue-600 dark:text-blue-300 px-1.5 py-0.5 rounded font-mono">
+                        {prodForm.dispensingUnit || 'Units'}
+                      </span>
+                    </label>
+                    <input 
+                      type="number" 
+                      min="0"
+                      placeholder="e.g. 50"
+                      value={prodForm.shelfQuantity || ''}
+                      onChange={e => {
+                        const val = Math.max(0, Number(e.target.value));
+                        setProdForm(prev => ({
+                          ...prev,
+                          shelfQuantity: val,
+                          quantity: val + Number(prev.warehouseQuantity || 0)
+                        }));
+                      }}
+                      className="w-full px-3 py-2 text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white rounded-lg outline-none font-bold"
+                    />
+                    <p className="text-[10px] text-slate-400">
+                      Active stock on sales floor & immediate dispatch
+                    </p>
+                  </div>
+
+                  {/* Warehouse Depot Stock */}
+                  <div className="p-2.5 bg-white dark:bg-slate-900 rounded-lg border border-purple-100 dark:border-purple-900/40 space-y-1">
+                    <label className="text-xs font-bold text-purple-700 dark:text-purple-400 flex justify-between items-center">
+                      <span className="flex items-center gap-1">
+                        <Building2 size={13} />
+                        Warehouse Depot Stock
+                      </span>
+                      <span className="text-[10px] bg-purple-50 dark:bg-purple-950/60 text-purple-600 dark:text-purple-300 px-1.5 py-0.5 rounded font-mono">
+                        {prodForm.dispensingUnit || 'Units'}
+                      </span>
+                    </label>
+                    <input 
+                      type="number" 
+                      min="0"
+                      placeholder="e.g. 200"
+                      value={prodForm.warehouseQuantity || ''}
+                      onChange={e => {
+                        const val = Math.max(0, Number(e.target.value));
+                        setProdForm(prev => ({
+                          ...prev,
+                          warehouseQuantity: val,
+                          quantity: Number(prev.shelfQuantity || 0) + val
+                        }));
+                      }}
+                      className="w-full px-3 py-2 text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white rounded-lg outline-none font-bold"
+                    />
+                    <p className="text-[10px] text-slate-400">
+                      Reserve stock stored in depot facility
+                    </p>
+                  </div>
+                </div>
+
+                {/* Warehouse Location Selection & Live Total Indicator */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+                  <div className="space-y-1">
+                    <label className="text-xs font-bold text-slate-600 dark:text-slate-300">
+                      Depot Housed Warehouse
+                    </label>
+                    {warehouses.length === 0 ? (
+                      <select
+                        value="main"
+                        disabled
+                        className="w-full px-3 py-2 text-xs bg-slate-100 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 text-slate-500 dark:text-slate-400 rounded-lg outline-none cursor-not-allowed font-medium font-semibold"
+                      >
+                        <option value="main">Main Warehouse (HQ)</option>
+                      </select>
+                    ) : (
+                      <select
+                        value={prodForm.warehouseId}
+                        onChange={e => setProdForm({ ...prodForm, warehouseId: e.target.value })}
+                        className="w-full px-3 py-2 text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white rounded-lg outline-none"
+                      >
+                        <option value="">-- Choose Warehouse --</option>
+                        {warehouses.map(w => (
+                          <option key={w.id} value={w.id}>{w.name}</option>
+                        ))}
+                      </select>
+                    )}
+                  </div>
+
+                  <div className="flex flex-col justify-center px-3 py-2 bg-blue-50/60 dark:bg-blue-950/20 rounded-lg border border-blue-100 dark:border-blue-900/30">
+                    <span className="text-[10px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider">
+                      Combined Total In-Stock
+                    </span>
+                    <span className="text-sm font-black text-slate-900 dark:text-white">
+                      {(Number(prodForm.shelfQuantity || 0) + Number(prodForm.warehouseQuantity || 0)).toLocaleString()} {prodForm.dispensingUnit || 'Units'}
+                    </span>
+                    <span className="text-[10px] text-slate-500 mt-0.5">
+                      Shelf: {Number(prodForm.shelfQuantity || 0)} | Warehouse: {Number(prodForm.warehouseQuantity || 0)}
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-2">
                 <div className="space-y-1">
                   <label className="text-xs font-bold text-slate-500">Depot Batch Number</label>
                   <input 
@@ -2266,9 +2391,6 @@ export default function DistributorView({ user, activeTab = 'dashboard', setActi
                     required
                   />
                 </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-2">
                 <div className="space-y-1">
                   <label className="text-xs font-bold text-slate-500">Expiry Date</label>
                   <input 
@@ -2278,30 +2400,6 @@ export default function DistributorView({ user, activeTab = 'dashboard', setActi
                     className="w-full px-3 py-2 text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white rounded-lg outline-none font-mono"
                     required
                   />
-                </div>
-                <div className="space-y-1">
-                  <label className="text-xs font-bold text-slate-500">Depot Housed Warehouse</label>
-                  {warehouses.length === 0 ? (
-                    <select
-                      value="main"
-                      disabled
-                      className="w-full px-3 py-2 text-xs bg-slate-100 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 text-slate-500 dark:text-slate-400 rounded-lg outline-none cursor-not-allowed font-medium font-semibold"
-                    >
-                      <option value="main">Main Warehouse</option>
-                    </select>
-                  ) : (
-                    <select
-                      value={prodForm.warehouseId}
-                      onChange={e => setProdForm({ ...prodForm, warehouseId: e.target.value })}
-                      className="w-full px-3 py-2 text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white rounded-lg outline-none"
-                      required
-                    >
-                      <option value="">-- Choose Warehouse --</option>
-                      {warehouses.map(w => (
-                        <option key={w.id} value={w.id}>{w.name}</option>
-                      ))}
-                    </select>
-                  )}
                 </div>
               </div>
 
@@ -2333,7 +2431,7 @@ export default function DistributorView({ user, activeTab = 'dashboard', setActi
                   Cancel
                 </button>
                 <button type="submit" className="px-4 py-1.5 bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs rounded-lg transition">
-                  Save Intake ({prodForm.purchaseUnit || 'Box'})
+                  Save Inventory ({prodForm.purchaseUnit || 'Pack'})
                 </button>
               </div>
             </form>
@@ -2376,7 +2474,7 @@ export default function DistributorView({ user, activeTab = 'dashboard', setActi
 
               <div className="grid grid-cols-2 gap-2">
                 <div className="space-y-1">
-                  <label className="text-xs font-bold text-slate-500">Box Quantity (lots)</label>
+                  <label className="text-xs font-bold text-slate-500">Unit Quantity (lots)</label>
                   <input 
                     type="number" 
                     placeholder="50"
@@ -2460,7 +2558,7 @@ export default function DistributorView({ user, activeTab = 'dashboard', setActi
 
               <div className="grid grid-cols-2 gap-2">
                 <div className="space-y-1">
-                  <label className="text-xs font-bold text-slate-500">Requested Box Qty</label>
+                  <label className="text-xs font-bold text-slate-500">Requested Quantity</label>
                   <input 
                     type="number" 
                     value={poForm.quantity}

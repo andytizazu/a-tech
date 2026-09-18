@@ -70,6 +70,35 @@ export const SubscriptionView = ({
 
   // Baseline Fallback New Subscription Plan configurations representing high pharmacy ecosystem fidelity
   const DEFAULT_PLANS = {
+    basic: {
+      id: 'basic',
+      name: 'Basic',
+      description: 'Essential toolkit for independent retail pharmacies and single-branch operations.',
+      recommended: false,
+      features: [
+        'Dashboard Operational Metrics',
+        'Inventory Management',
+        'Stock Receiving / Intake (Separate from Dispensing)',
+        'Sales Management & POS Screen',
+        'Wholesales & Suppliers Ledger',
+        'Basic Bin Card & Stock Movement Ledger',
+        'Detailed PDF Inventory Report Export',
+        'System Notifications & Stock Alerts',
+        'Essential Pharmacy Settings',
+        'Unit Conversion (Purchase & Dispensing Units)',
+        'Barcode Support'
+      ],
+      limitations: [
+        'Customer / Patient Tracking & Loyalty Discounts',
+        'Multiple Branch Management & Outlets',
+        'Branch-to-Branch Stock Transfers',
+        'Procurement Orders & PR/PO',
+        'B2B Wholesale Marketplace Orders',
+        'Multiple Staff Sub-Accounts'
+      ],
+      futureFeatures: [],
+      enableFutureFeatures: false
+    },
     standard: {
       id: 'standard', // Maps to Professional Plan
       name: 'Professional',
@@ -161,43 +190,43 @@ export const SubscriptionView = ({
     {
       title: "Core Operations & POS",
       items: [
-        { name: "Inventory Management & Expiry Alerts", standard: true, premium: true },
-        { name: "POS Sales Management", standard: true, premium: true },
-        { name: "Customer Management & History", standard: true, premium: true },
-        { name: "Country of Origin Tracking", standard: true, premium: true },
-        { name: "Bin Card Audit Ledger", standard: true, premium: true },
-        { name: "Purchase & Dispensing Conversion Factors", standard: true, premium: true },
-        { name: "Barcode Scanner & Printer Support", standard: true, premium: true },
+        { name: "Inventory Management & Expiry Alerts", basic: true, standard: true, premium: true },
+        { name: "POS Sales Management", basic: true, standard: true, premium: true },
+        { name: "Customer Management & History", basic: false, standard: true, premium: true },
+        { name: "Country of Origin Tracking", basic: true, standard: true, premium: true },
+        { name: "Bin Card Audit Ledger", basic: true, standard: true, premium: true },
+        { name: "Purchase & Dispensing Conversion Factors", basic: true, standard: true, premium: true },
+        { name: "Barcode Scanner & Printer Support", basic: true, standard: true, premium: true },
       ]
     },
     {
       title: "Branches, Outlets & Collaboration",
       items: [
-        { name: "Multi-branch Network Registry", standard: true, premium: true },
-        { name: "Branch Creation, Controls & Delete", standard: true, premium: true },
-        { name: "Branch Performance Analytics Panels", standard: true, premium: true },
-        { name: "Branch Inventory Live Visibility", standard: true, premium: true },
-        { name: "User Accounts & Audit Trails", standard: true, premium: true },
-        { name: "Branch Stock Transfers Workflow", standard: false, premium: true },
-        { name: "Automatic Unified TRF Transfer IDs", standard: false, premium: true },
-        { name: "Branch Transfer Audit logs", standard: false, premium: true },
+        { name: "Multi-branch Network Registry", basic: false, standard: true, premium: true },
+        { name: "Branch Creation, Controls & Delete", basic: false, standard: true, premium: true },
+        { name: "Branch Performance Analytics Panels", basic: false, standard: true, premium: true },
+        { name: "Branch Inventory Live Visibility", basic: false, standard: true, premium: true },
+        { name: "User Accounts & Audit Trails", basic: false, standard: true, premium: true },
+        { name: "Branch Stock Transfers Workflow", basic: false, standard: false, premium: true },
+        { name: "Automatic Unified TRF Transfer IDs", basic: false, standard: false, premium: true },
+        { name: "Branch Transfer Audit logs", basic: false, standard: false, premium: true },
       ]
     },
     {
       title: "Premium Controls & AI Innovation",
       items: [
-        { name: "Warehouse Ledger Management", standard: false, premium: true },
-        { name: "Supplier Performance, Lead-Time & Licensing", standard: false, premium: true },
-        { name: "Regional & Cross-Country Reporting", standard: false, premium: true },
-        { name: "Premium Multi-Zone Performance Logs", standard: false, premium: true },
-        { name: "API Access & Unified External Ledger", standard: false, premium: true },
-        { name: "Future AI Forecasting Engine Layer", standard: false, premium: "Future Support Active" },
+        { name: "Warehouse Ledger Management", basic: false, standard: false, premium: true },
+        { name: "Supplier Performance, Lead-Time & Licensing", basic: false, standard: false, premium: true },
+        { name: "Regional & Cross-Country Reporting", basic: false, standard: false, premium: true },
+        { name: "Premium Multi-Zone Performance Logs", basic: false, standard: false, premium: true },
+        { name: "API Access & Unified External Ledger", basic: false, standard: false, premium: true },
+        { name: "Future AI Forecasting Engine Layer", basic: false, standard: false, premium: "Future Support Active" },
       ]
     }
   ];
 
   // Merge Custom Admin Settings with Defaults for subscription plans
-  const getDynamicPlan = (planId: 'standard' | 'premium') => {
+  const getDynamicPlan = (planId: 'basic' | 'standard' | 'premium') => {
     const defaultData = DEFAULT_PLANS[planId];
     const customData = settings?.plansCustomize?.[planId];
     return {
@@ -213,6 +242,7 @@ export const SubscriptionView = ({
   };
 
   const plans = [
+    getDynamicPlan('basic'),
     getDynamicPlan('standard'),
     getDynamicPlan('premium')
   ];
@@ -608,7 +638,7 @@ export const SubscriptionView = ({
       </div>
 
       {/* Plan Cards Display Rendering */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-8 max-w-5xl mx-auto">
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 max-w-7xl mx-auto">
         {plans.map((plan) => {
           // Dynamic calculation relative to plan target
           const planCostDetails = getSubscriptionCost({
@@ -767,6 +797,7 @@ export const SubscriptionView = ({
             <thead>
               <tr className="border-b border-slate-200 dark:border-slate-800 text-[10px] font-black text-slate-400 uppercase tracking-widest bg-slate-50 dark:bg-slate-850/50">
                 <th className="py-3 px-4">Detailed Capability Specification</th>
+                <th className="py-3 px-4 text-center">Basic</th>
                 <th className="py-3 px-4 text-center">Professional (Standard)</th>
                 <th className="py-3 px-4 text-center">Premium</th>
               </tr>
@@ -775,7 +806,7 @@ export const SubscriptionView = ({
               {MATRIX_CATEGORIES.map((cat, ci) => (
                 <React.Fragment key={ci}>
                   <tr className="bg-slate-100/50 dark:bg-slate-800/10 font-black text-slate-800 dark:text-slate-300">
-                    <td colSpan={3} className="py-2.5 px-4 text-[10px] uppercase text-blue-650 tracking-wider">
+                    <td colSpan={4} className="py-2.5 px-4 text-[10px] uppercase text-blue-650 tracking-wider">
                       {cat.title}
                     </td>
                   </tr>
@@ -783,6 +814,17 @@ export const SubscriptionView = ({
                     <tr key={ii} className="hover:bg-slate-50/50 dark:hover:bg-slate-800/5 transition-all">
                       <td className="py-3 px-4 text-slate-700 dark:text-slate-300 font-medium">
                         {item.name}
+                      </td>
+                      <td className="py-3 px-4 text-center">
+                        {typeof (item as any).basic === 'boolean' ? (
+                          (item as any).basic ? (
+                            <Check className="mx-auto text-green-500 font-bold" size={16} />
+                          ) : (
+                            <X className="mx-auto text-slate-300" size={14} />
+                          )
+                        ) : (
+                          <span className="text-[10px] font-bold text-slate-600">{(item as any).basic}</span>
+                        )}
                       </td>
                       <td className="py-3 px-4 text-center bg-blue-50/10 dark:bg-blue-950/5">
                         {typeof item.standard === 'boolean' ? (

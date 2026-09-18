@@ -78,6 +78,9 @@ export interface InventoryProduct {
   price: number;
   costPrice: number;
   quantity: number;
+  shelfQuantity?: number; // Shelf / front-desk / dispensing counter stock
+  warehouseQuantity?: number; // Warehouse / back storage stock
+  warehouseName?: string;
   batchNumber: string;
   expiryDate: string;
   supplier: string;
@@ -86,6 +89,7 @@ export interface InventoryProduct {
   warehouseId?: string; // Associated warehouse for the inventory item
   lowStockThreshold: number;
   createdAt: number;
+  updatedAt?: number;
   
   // Medicine Master Data Enhancements
   genericName?: string;
